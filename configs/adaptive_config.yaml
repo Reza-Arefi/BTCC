@@ -1,0 +1,50 @@
+# Adaptive walk-forward learning (SIGNAL ONLY)
+# Separate from live signal_config defaults; Champion starts from signal_config weights.
+
+adaptive:
+  enabled: true
+  models_dir: data/models
+  predictions_path: data/predictions/adaptive_predictions.csv
+  reports_dir: logs/adaptive
+  initial_backtest: results/backtest_90d_20260829_001035
+  data_source_tag_historical: HISTORICAL_INITIAL_DATA
+  data_source_tag_live: LIVE_OBSERVATION_DATA
+
+  # Time decay for training (half-life in days). Configurable — not aggressive by default.
+  time_decay_half_life_days: 45
+
+  # Checkpoint: check for Challenger every N hours (not an automatic weight update)
+  checkpoint_hours: 24
+
+  # Minimum mature 4h observations before attempting Challenger
+  min_samples_conservative: 500
+  min_samples_normal: 2000
+
+  # Shrinkage toward Champion (adaptation_rate). 0 = never move; 1 = full Challenger estimate
+  adaptation_rate: 0.25
+
+  # Factor weight bounds (after shrinkage, before renormalize)
+  weight_min: 0.05
+  weight_max: 0.40
+
+  # Promotion thresholds (Challenger must improve by at least these amounts)
+  promote_brier_improvement: 0.005
+  promote_calibration_improvement: 0.005
+  promote_ranking_improvement: 0.01
+
+  # Validation split of labeled data (temporal)
+  train_fraction: 0.70
+  validation_fraction: 0.20
+  # remainder = recent holdout (reported, not used for promotion)
+
+  primary_horizon: 4
+  horizons_hours: [1, 4, 8, 12, 24]
+
+  # Do NOT promote from HISTORICAL_INITIAL_DATA alone (Top-5 backtest is biased).
+  # First promotion requires mature LIVE_OBSERVATION_DATA.
+  require_live_for_promotion: true
+  min_live_samples_for_promotion: 200
+
+  # Sub-indicator adaptation (disabled initially — requires more samples)
+  allow_subindicator_adaptation: false
+  min_samples_subindicator: 5000

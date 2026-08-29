@@ -1,0 +1,21 @@
+# BTCC 90-day historical prediction research backtest
+# Separate from live signal bot — no Telegram, no trading
+
+backtest:
+  days: 90
+  interval: 15m
+  min_warmup_bars: 200          # indicators need history; matches live ~100+ buffer
+  top_n: 5
+  horizons_hours: [1, 4, 8, 12, 24]
+
+data:
+  candle_dir: data/backtest_candles
+  dominance_cache: data/backtest_dominance
+  coingecko_base: https://api.coingecko.com/api/v3
+  # Optional: set BTCC_COINGECKO_API_KEY in .env for global/market_cap_chart (Demo/Pro key)
+
+output:
+  results_root: results
+
+# Inherits universe, factors, late_entry, probability from signal_config.yaml
+signal_config: configs/signal_config.yaml

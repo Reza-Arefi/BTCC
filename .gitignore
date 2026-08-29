@@ -1,0 +1,54 @@
+# --- Secrets & local env (NEVER commit) ---
+.env
+.env.*
+*.pem
+*.key
+*secret*
+*credentials*
+secrets/
+credentials/
+
+# --- Python ---
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- Runtime data (regenerated on host) ---
+data/candles/
+data/predictions/
+data/models/
+data/backtest_candles/
+data/backtest_dominance/
+!data/.gitkeep
+
+# --- Logs & research outputs ---
+logs/
+results/
+*.log
+
+# --- Databases / binary caches ---
+*.db
+*.sqlite
+*.sqlite3
+*.parquet
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

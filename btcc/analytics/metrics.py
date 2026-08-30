@@ -66,7 +66,7 @@ def cumulative_btc(legs: pd.DataFrame) -> pd.DataFrame:
     """Per-strategy cumulative BTC PnL through time (exit order)."""
     rows = []
     if legs.empty or "strategy_key" not in legs.columns:
-        return pd.DataFrame(columns=["strategy_key", "exit_ts", "pnl_btc", "cum_btc"])
+        return pd.DataFrame(columns=["strategy_key", "exit_ts", "pnl_btc", "cum_btc", "day_number"])
     df = legs.copy()
     df["exit_ts"] = _utc_series(df.get("exit_ts", pd.Series(dtype=str)))
     df = df.dropna(subset=["exit_ts"])
@@ -74,40 +74,57 @@ def cumulative_btc(legs: pd.DataFrame) -> pd.DataFrame:
         g = g.sort_values("exit_ts")
         pnl = pd.to_numeric(g.get("pnl_btc"), errors="coerce").fillna(0.0)
         cum = pnl.cumsum()
-        for ts, p, c in zip(g["exit_ts"], pnl, cum):
-            rows.append({"strategy_key": sk, "exit_ts": ts, "pnl_btc": float(p), "cum_btc": float(c)})
+        day_col = g["day_number"] if "day_number" in g.columns else [None] * len(g)
+        for ts, p, c, dn in zip(g["exit_ts"], pnl, cum, day_col):
+            rows.append({
+                "strategy_key": sk,
+                "exit_ts": ts,
+                "pnl_btc": float(p),
+                "cum_btc": float(c),
+                "day_number": int(dn) if pd.notna(dn) else None,
+            })
     return pd.DataFrame(rows)
 
 
 def rolling_win_rate(legs: pd.DataFrame, window_days: int = 30) -> pd.DataFrame:
     rows = []
     if legs.empty or "strategy_key" not in legs.columns:
-        return pd.DataFrame(columns=["strategy_key", "exit_ts", "rolling_win_rate", "cum_win_rate"])
+        return pd.DataFrame(columns=["strategy_key", "exit_ts", "rolling_win_rate", "cum_win_rate", "day_number"])
     df = legs.copy()
     df["exit_ts"] = _utc_series(df.get("exit_ts"))
     df["win"] = (pd.to_numeric(df.get("pnl_btc"), errors="coerce") > 0).astype(float)
     df = df.dropna(subset=["exit_ts"])
-    for sk, g in df.groupby("strategy_key"):
-        g = g.sort_values("exit_ts").set_index("exit_ts")
+    for sk, g0 in df.groupby("strategy_key"):
+        g0 = g0.sort_values("exit_ts")
+        g = g0.set_index("exit_ts")
         roll = g["win"].rolling(f"{int(window_days)}D").mean()
         cum = g["win"].expanding().mean()
+        day_map = {}
+        if "day_number" in g0.columns:
+            for ts, dn in zip(g0["exit_ts"], g0["day_number"]):
+                day_map[ts] = dn
         for ts, rw, cw in zip(roll.index, roll.values, cum.values):
+            dn = day_map.get(ts)
             rows.append({
                 "strategy_key": sk,
                 "exit_ts": ts,
                 "rolling_win_rate": float(rw) if pd.notna(rw) else None,
                 "cum_win_rate": float(cw) if pd.notna(cw) else None,
+                "day_number": int(dn) if dn is not None and pd.notna(dn) else None,
             })
     return pd.DataFrame(rows)
 
 
 def weight_timeseries(wh: pd.DataFrame) -> pd.DataFrame:
     if wh.empty:
-        return pd.DataFrame(columns=["update_timestamp", "indicator", "new_weight", "update_id", "phase"])
+        return pd.DataFrame(columns=["update_timestamp", "indicator", "new_weight", "update_id", "phase", "day_number"])
     df = wh.copy()
     if "update_timestamp" in df.columns:
         df["update_timestamp"] = _utc_series(df["update_timestamp"])
-    keep = [c for c in ("update_timestamp", "indicator", "new_weight", "old_weight", "update_id", "phase", "update_status") if c in df.columns]
+    keep = [c for c in (
+        "update_timestamp", "indicator", "new_weight", "old_weight", "update_id",
+        "phase", "update_status", "day_number",
+    ) if c in df.columns]
     return df[keep].sort_values("update_timestamp") if "update_timestamp" in df.columns else df
 
 
@@ -273,13 +290,15 @@ def drawdown_series(legs: pd.DataFrame) -> pd.DataFrame:
         equity = pnl.cumsum()
         peak = equity.cummax()
         dd = equity - peak
-        for ts, eq, pk, d in zip(g["exit_ts"], equity, peak, dd):
+        day_col = g["day_number"] if "day_number" in g.columns else [None] * len(g)
+        for ts, eq, pk, d, dn in zip(g["exit_ts"], equity, peak, dd, day_col):
             rows.append({
                 "strategy_key": sk,
                 "exit_ts": ts,
                 "equity_btc": float(eq),
                 "peak_btc": float(pk),
                 "drawdown_btc": float(d),
+                "day_number": int(dn) if dn is not None and pd.notna(dn) else None,
             })
     return pd.DataFrame(rows)
 

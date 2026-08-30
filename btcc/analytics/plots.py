@@ -23,9 +23,26 @@ def _save(fig, path: Path) -> None:
     plt.close(fig)
 
 
+def _mark_init_day(ax, init_days: int | None) -> None:
+    if init_days is None:
+        return
+    ax.axvline(int(init_days), color="#666666", ls="--", lw=1.2, alpha=0.8, label=f"Day {int(init_days)} init→daily")
+
+
+def _series_x(df: pd.DataFrame, ts_col: str) -> tuple[Any, str]:
+    """Prefer day_number x-axis; fall back to timestamp."""
+    if df is not None and not df.empty and "day_number" in df.columns and df["day_number"].notna().any():
+        return pd.to_numeric(df["day_number"], errors="coerce"), "Day"
+    if df is not None and not df.empty and ts_col in df.columns:
+        return pd.to_datetime(df[ts_col], utc=True, errors="coerce"), "Time"
+    return pd.Series(dtype=float), "Day"
+
+
 def plot_btc_accumulation_by_strategy(
     cum_by_arm: dict[str, pd.DataFrame],
     plots_dir: Path,
+    *,
+    init_days: int | None = None,
 ) -> list[Path]:
     paths = []
     strategies = sorted({
@@ -37,12 +54,25 @@ def plot_btc_accumulation_by_strategy(
         for arm, df in cum_by_arm.items():
             if df is None or df.empty:
                 continue
-            g = df[df["strategy_key"] == sk].sort_values("exit_ts")
+            g = df[df["strategy_key"] == sk].copy()
             if g.empty:
                 continue
-            ax.plot(pd.to_datetime(g["exit_ts"]), g["cum_btc"], label=arm, color=ARM_COLORS.get(arm))
+            if "day_number" in g.columns:
+                g = g.sort_values("day_number")
+                x, xlabel = g["day_number"], "Day"
+            else:
+                g = g.sort_values("exit_ts")
+                x, xlabel = pd.to_datetime(g["exit_ts"]), "Time"
+            ax.plot(x, g["cum_btc"], label=arm, color=ARM_COLORS.get(arm))
+        _mark_init_day(ax, init_days)
         ax.set_title(f"BTC accumulation — {sk}")
-        ax.set_xlabel("Time")
+        ax.set_xlabel(xlabel if 'xlabel' in dir() else "Day")
+        # xlabel from last series; force Day when any arm has day_number
+        if any(
+            df is not None and not df.empty and "day_number" in df.columns
+            for df in cum_by_arm.values()
+        ):
+            ax.set_xlabel("Day")
         ax.set_ylabel("Cumulative BTC PnL")
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -55,6 +85,8 @@ def plot_btc_accumulation_by_strategy(
 def plot_rolling_win_rate(
     wr_by_arm: dict[str, pd.DataFrame],
     plots_dir: Path,
+    *,
+    init_days: int | None = None,
 ) -> list[Path]:
     paths = []
     strategies = sorted({
@@ -66,11 +98,19 @@ def plot_rolling_win_rate(
         for arm, df in wr_by_arm.items():
             if df is None or df.empty:
                 continue
-            g = df[df["strategy_key"] == sk].dropna(subset=["rolling_win_rate"])
+            g = df[df["strategy_key"] == sk].dropna(subset=["rolling_win_rate"]).copy()
             if g.empty:
                 continue
-            ax.plot(pd.to_datetime(g["exit_ts"]), g["rolling_win_rate"], label=arm, color=ARM_COLORS.get(arm))
+            if "day_number" in g.columns:
+                g = g.sort_values("day_number")
+                ax.plot(g["day_number"], g["rolling_win_rate"], label=arm, color=ARM_COLORS.get(arm))
+            else:
+                ax.plot(pd.to_datetime(g["exit_ts"]), g["rolling_win_rate"], label=arm, color=ARM_COLORS.get(arm))
+        _mark_init_day(ax, init_days)
         ax.set_title(f"Rolling 30d win rate — {sk}")
+        ax.set_xlabel("Day" if any(
+            d is not None and not d.empty and "day_number" in d.columns for d in wr_by_arm.values()
+        ) else "Time")
         ax.set_ylabel("Win rate")
         ax.set_ylim(0, 1)
         ax.legend()
@@ -81,16 +121,28 @@ def plot_rolling_win_rate(
     return paths
 
 
-def plot_adaptive_weights(wh: pd.DataFrame, plots_dir: Path) -> Path | None:
+def plot_adaptive_weights(
+    wh: pd.DataFrame,
+    plots_dir: Path,
+    *,
+    init_days: int | None = None,
+) -> Path | None:
     if wh.empty or "indicator" not in wh.columns:
         return None
     fig, ax = plt.subplots(figsize=(11, 6))
     for ind in FACTOR_KEYS:
-        g = wh[wh["indicator"] == ind].sort_values("update_timestamp")
+        g = wh[wh["indicator"] == ind].copy()
         if g.empty:
             continue
-        ax.plot(pd.to_datetime(g["update_timestamp"]), g["new_weight"], label=ind, marker="o", markersize=3)
+        if "day_number" in g.columns and g["day_number"].notna().any():
+            g = g.sort_values("day_number")
+            ax.plot(g["day_number"], g["new_weight"], label=ind, marker="o", markersize=3)
+        else:
+            g = g.sort_values("update_timestamp")
+            ax.plot(pd.to_datetime(g["update_timestamp"]), g["new_weight"], label=ind, marker="o", markersize=3)
+    _mark_init_day(ax, init_days)
     ax.set_title("Adaptive indicator weights through time")
+    ax.set_xlabel("Day" if "day_number" in wh.columns else "Time")
     ax.set_ylabel("Weight")
     ax.legend(fontsize=8, ncol=2)
     ax.grid(True, alpha=0.3)
@@ -197,22 +249,36 @@ def plot_accuracy_buckets(df: pd.DataFrame, plots_dir: Path) -> Path | None:
     return p
 
 
-def plot_drawdown(dd_by_arm: dict[str, pd.DataFrame], plots_dir: Path) -> list[Path]:
+def plot_drawdown(
+    dd_by_arm: dict[str, pd.DataFrame],
+    plots_dir: Path,
+    *,
+    init_days: int | None = None,
+) -> list[Path]:
     paths = []
     strategies = sorted({
         sk for df in dd_by_arm.values() if df is not None and not df.empty
         for sk in df["strategy_key"].unique()
     })
+    use_day = any(
+        d is not None and not d.empty and "day_number" in d.columns for d in dd_by_arm.values()
+    )
     for sk in strategies:
         fig, ax = plt.subplots(figsize=(10, 4))
         for arm, df in dd_by_arm.items():
             if df is None or df.empty:
                 continue
-            g = df[df["strategy_key"] == sk]
+            g = df[df["strategy_key"] == sk].copy()
             if g.empty:
                 continue
-            ax.plot(pd.to_datetime(g["exit_ts"]), g["drawdown_btc"], label=arm, color=ARM_COLORS.get(arm))
+            if use_day and "day_number" in g.columns:
+                g = g.sort_values("day_number")
+                ax.plot(g["day_number"], g["drawdown_btc"], label=arm, color=ARM_COLORS.get(arm))
+            else:
+                ax.plot(pd.to_datetime(g["exit_ts"]), g["drawdown_btc"], label=arm, color=ARM_COLORS.get(arm))
+        _mark_init_day(ax, init_days)
         ax.set_title(f"BTC drawdown — {sk}")
+        ax.set_xlabel("Day" if use_day else "Time")
         ax.set_ylabel("Drawdown (BTC)")
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -222,12 +288,25 @@ def plot_drawdown(dd_by_arm: dict[str, pd.DataFrame], plots_dir: Path) -> list[P
     return paths
 
 
-def plot_simultaneous(sim_df: pd.DataFrame, plots_dir: Path, max_open: int = 10) -> Path | None:
+def plot_simultaneous(
+    sim_df: pd.DataFrame,
+    plots_dir: Path,
+    max_open: int = 10,
+    *,
+    init_days: int | None = None,
+) -> Path | None:
     if sim_df.empty:
         return None
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(pd.to_datetime(sim_df["timestamp"]), sim_df["n_open"], color="#333")
+    if "day_number" in sim_df.columns and sim_df["day_number"].notna().any():
+        g = sim_df.sort_values("day_number")
+        ax.plot(g["day_number"], g["n_open"], color="#333")
+        ax.set_xlabel("Day")
+    else:
+        ax.plot(pd.to_datetime(sim_df["timestamp"]), sim_df["n_open"], color="#333")
+        ax.set_xlabel("Time")
     ax.axhline(max_open, color="red", ls="--", label=f"max_open={max_open}")
+    _mark_init_day(ax, init_days)
     ax.set_title("Simultaneous open opportunities")
     ax.set_ylabel("n_open")
     ax.legend()

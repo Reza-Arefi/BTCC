@@ -22,6 +22,7 @@ from btcc.data.relative_btc_d import (
     TOP_COIN_IDS,
     compute_relative_btc_d_pct,
 )
+from btcc.sim.config import load_sim_config
 
 
 def main() -> int:
@@ -79,7 +80,9 @@ def main() -> int:
         "require_for_new_trades blocks NEW simulated opportunities; "
         "predictions may still be recorded with health flags; failure logged / Telegram."
     )
-    report["questions"]["stale_max_age_seconds"] = 1800
+    report["questions"]["stale_max_age_seconds"] = int(
+        ((load_sim_config().get("btc_d_health") or {}).get("max_age_seconds", 7200))
+    )
     report["questions"]["stale_blocks_new_trades"] = True
     report["questions"]["btc_d_stored_on_prediction"] = True
     report["questions"]["stored_fields"] = [

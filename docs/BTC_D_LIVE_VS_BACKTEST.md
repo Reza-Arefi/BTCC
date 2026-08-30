@@ -1,6 +1,6 @@
 # BTC.D live vs backtest — parity verification
 
-Generated: `2026-08-29T23:02:26.414300+00:00`
+Generated: `2026-08-30T09:47:43.355232+00:00`
 
 ## Verdict
 
@@ -34,83 +34,20 @@ BTC.D_relative(t) = 100 * BTC_market_cap(t) / sum_i market_cap_i(t) over availab
 | Future obs can enter earlier prediction? | **no** |
 | Missing top-N mcap | skip coin; require BTC + ≥8 coins |
 | API failure | keep last ≤ t; else unavailable → block new trades |
-| Stale max age (`BTC_D_MAX_AGE`) | **7200 s (2 h)** — observation age > 7200s ⇒ STALE ⇒ block NEW trades |
+| Stale max age | `7200` s |
 | Stale blocks new trades? | **yes** (`require_for_new_trades`) |
-| Stored on every prediction? | **yes** (`btc_d_status`, `btc_d_age_seconds`, `btc_dominance`) |
-
-## Historical vs live resolution
-
-| Context | Resolution | Notes |
-|---------|------------|-------|
-| **1-year backtest** | **Daily** relative proxy (~365 points) | Acceptable for primary experiment |
-| **Live / short backtest** | **~Hourly** relative proxy | Higher-frequency same formula |
-
-Both paths: `observation_at(t)` returns last obs with `timestamp <= t`; **no interpolation**; **no present-day calibration**.
-Both are **relative BTC dominance proxy**, not official absolute BTC.D.
+| Stored on every prediction? | **yes** |
 
 ## Live probe
 
 ```json
 {
   "ok": true,
-  "pct": 63.45665387610847,
-  "obs_ts": "2026-08-29T23:00:00+00:00",
+  "pct": 63.435420163747054,
+  "obs_ts": "2026-08-30T07:30:00+00:00",
   "source": "coingecko_top_coins_relative",
   "meta": {
-    "source": "coingecko_top_coins_relative",
-    "representation": "relative_btc_share_of_top_n",
-    "calibration": "none_no_present_day_scaling",
-    "coins_requested": [
-      "bitcoin",
-      "ethereum",
-      "tether",
-      "ripple",
-      "binancecoin",
-      "solana",
-      "usd-coin",
-      "dogecoin",
-      "cardano",
-      "tron",
-      "chainlink",
-      "avalanche-2",
-      "bitcoin-cash",
-      "litecoin",
-      "polkadot",
-      "uniswap",
-      "stellar",
-      "hyperliquid",
-      "sui",
-      "toncoin",
-      "the-open-network"
-    ],
-    "coins_used": [
-      "avalanche-2",
-      "binancecoin",
-      "bitcoin",
-      "bitcoin-cash",
-      "cardano",
-      "chainlink",
-      "dogecoin",
-      "ethereum",
-      "hyperliquid",
-      "litecoin",
-      "polkadot",
-      "ripple",
-      "solana",
-      "stellar",
-      "sui",
-      "tether",
-      "the-open-network",
-      "tron",
-      "uniswap",
-      "usd-coin"
-    ],
-    "n_coins_used": 20,
-    "bitcoin_present": true,
-    "status": "OK",
-    "btc_market_cap": 1570518817920.0,
-    "total_top_n_cap": 2474947419992.0,
-    "btc_dominance_pct": 63.45665387610847
+    "status": "API_FAILURE"
   }
 }
 ```
@@ -126,8 +63,8 @@ Both are **relative BTC dominance proxy**, not official absolute BTC.D.
   "representation": "relative_btc_share_of_top_n",
   "last_ts": "2026-08-29 00:00:00+00:00",
   "last_pct": 63.43318092529729,
-  "live_pct": 63.45665387610847,
-  "abs_diff_pp": 0.023472950811175508,
+  "live_pct": 63.435420163747054,
+  "abs_diff_pp": 0.0022392384497607054,
   "note": "Live (/markets now) vs last historical market_chart point can differ by hours/days of market move; definition/source/calibration must match."
 }
 ```

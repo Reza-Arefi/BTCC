@@ -41,6 +41,10 @@ universe:
     - XRP
   quote: USDT
   btc_symbol: BTCUSDT
+  # Bases with no USDT listing on MEXC — fetch native BTC market only.
+  # Do NOT probe BASEUSDT first (avoids invalid-symbol 400s, e.g. CKBTCUSDT).
+  native_btc_only:
+    - CKBTC
   # Original MEXC BTC-quoted market for each base (research fidelity)
   btc_markets:
     A: ABTC

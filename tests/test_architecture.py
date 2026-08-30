@@ -110,9 +110,116 @@ def test_universe_exact_20_matches_research():
     assert resolve_btc_market("ETH", cfg) == "ETHBTC"
     assert resolve_btc_market("CKBTC", cfg) == "CKBTCBTC"
     assert resolve_btc_market("A", cfg) == "ABTC"
+    from btcc.universe import resolve_data_market, uses_native_btc_market
+    assert uses_native_btc_market("CKBTC", cfg) is True
+    ck = resolve_data_market("CKBTC", cfg)
+    assert ck["logical_pair"] == "CKBTC"
+    assert ck["resolved_market"] == "CKBTCBTC"
+    assert ck["mode"] == "native_btc"
+    assert "CKBTCUSDT" not in ck["resolved_market"]
+    eth = resolve_data_market("ETH", cfg)
+    assert eth["resolved_market"] == "ETHUSDT"
+    assert eth["mode"] == "synthetic_usdt"
     audit = build_universe_audit(cfg, {}, set())
     assert len(audit) == 20
-    assert all(r["btc_relative_construction"].endswith("/ BTCUSDT") for r in audit)
+    ck_row = next(r for r in audit if r["symbol"] == "CKBTC")
+    assert ck_row["resolved_market"] == "CKBTCBTC"
+    assert ck_row["btc_relative_construction"].startswith("native ")
+    eth_row = next(r for r in audit if r["symbol"] == "ETH")
+    assert eth_row["btc_relative_construction"].endswith("/ BTCUSDT")
+
+
+def test_ckbtc_never_resolves_to_usdt_fetch():
+    """Regression: CKBTC must resolve to CKBTCBTC before any API request."""
+    from btcc.universe import resolve_data_market, resolve_btc_market
+    from unittest.mock import MagicMock, patch
+
+    cfg = load_config()
+    assert resolve_btc_market("CKBTC", cfg) == "CKBTCBTC"
+    meta = resolve_data_market("CKBTC", cfg)
+    assert meta["resolved_market"] == "CKBTCBTC"
+    assert meta["logical_pair"] == "CKBTC"
+
+    # download_panels must bootstrap CKBTCBTC only — never CKBTCUSDT
+    from btcc.backtest.data_loader import download_panels
+
+    calls: list[str] = []
+
+    def fake_bootstrap(symbol, interval, lookback, candle_dir, force=False):
+        calls.append(symbol)
+        if symbol == "CKBTCUSDT":
+            raise AssertionError("CKBTCUSDT must not be requested")
+        import pandas as pd
+        n = 150
+        ts = pd.date_range("2026-01-01", periods=n, freq="15min", tz="UTC")
+        px = pd.Series(range(n), dtype=float) + 1.0
+        return pd.DataFrame({
+            "timestamp": ts,
+            "open": px, "high": px * 1.01, "low": px * 0.99, "close": px, "volume": 1.0,
+        })
+
+    cfg_bt = dict(cfg)
+    cfg_bt["backtest"] = {"interval": "15m", "min_warmup_bars": 200}
+    cfg_bt["backtest_data"] = {"candle_dir": "/tmp/btcc_test_candles"}
+    cfg_bt["data"] = {**cfg["data"], "mexc_rest": "https://api.mexc.com"}
+
+    with patch("btcc.backtest.data_loader.MexcPublicREST") as MockREST:
+        inst = MockREST.return_value
+        inst.bootstrap_symbol.side_effect = fake_bootstrap
+        panels = download_panels(cfg_bt, days=2, warmup_bars=200, force=False)
+
+    assert "CKBTCUSDT" not in calls
+    assert "CKBTCBTC" in calls
+    assert "CKBTC" in panels["coins"]
+    coin = panels["coins"]["CKBTC"]
+    assert coin["logical_pair"] == "CKBTC"
+    assert coin["resolved_market"] == "CKBTCBTC"
+
+
+
+def test_btc_d_max_age_is_7200():
+    from btcc.sim.config import load_sim_config
+    sim = load_sim_config()
+    assert int((sim.get("btc_d_health") or {}).get("max_age_seconds")) == 7200
+
+
+def test_verify_btc_d_parity_uses_config_max_age():
+    """Parity report must not hardcode 1800; uses sim_config 7200."""
+    import scripts.verify_btc_d_parity as mod
+    from btcc.sim.config import load_sim_config
+    src = Path(mod.__file__).read_text(encoding="utf-8")
+    assert 'stale_max_age_seconds"] = 1800' not in src
+    assert "load_sim_config" in src
+    assert int((load_sim_config().get("btc_d_health") or {})["max_age_seconds"]) == 7200
+
+
+def test_bootstrap_does_not_truncate_disk_cache(tmp_path):
+    """Short lookback must not destroy longer on-disk candle history."""
+    import pandas as pd
+    from btcc.data.candles import load_candles, save_candles, candle_path
+    from btcc.data.websocket import MexcPublicREST
+
+    candle_dir = tmp_path / "candles"
+    interval = "15m"
+    symbol = "BTCUSDT"
+    # Seed ~200 bars of history
+    idx = pd.date_range("2025-01-01", periods=200, freq="15min", tz="UTC")
+    seeded = pd.DataFrame({
+        "timestamp": idx,
+        "open": 1.0, "high": 1.1, "low": 0.9, "close": 1.0, "volume": 10.0,
+    })
+    save_candles(seeded, candle_path(str(candle_dir), symbol, interval))
+
+    rest = MexcPublicREST("https://api.mexc.com")
+    # Stub network: probe ok, no new range fetches
+    rest.fetch_klines = lambda *a, **k: seeded.tail(5).copy()  # type: ignore
+    rest._fetch_range = lambda *a, **k: []  # type: ignore
+
+    out = rest.bootstrap_symbol(symbol, interval, lookback_bars=50, candle_dir=str(candle_dir), force=True)
+    assert out is not None
+    disk = load_candles(candle_path(str(candle_dir), symbol, interval))
+    assert disk is not None
+    assert len(disk) >= 200, f"disk truncated to {len(disk)}"
 
 
 def test_no_order_symbols_in_package():
@@ -122,9 +229,7 @@ def test_no_order_symbols_in_package():
     for p in root.rglob("*.py"):
         text = p.read_text(encoding="utf-8")
         for tok in ("create_order", "place_order", "cancel_order"):
-            # allow mentions inside safety deny list / comments about blocking
             if tok in text and "deny" not in text.lower() and "forbidden" not in text.lower() and "block" not in text.lower():
-                # safety module lists them — skip
                 if "no_trading" in str(p):
                     continue
                 bad.append((str(p), tok))

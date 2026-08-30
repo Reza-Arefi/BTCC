@@ -90,7 +90,7 @@ def evaluate_health(
             dts = dominance_ts if dominance_ts.tzinfo else dominance_ts.replace(tzinfo=timezone.utc)
             btc_d_age = (now - dts).total_seconds()
             btc_d_ts_str = dts.isoformat()
-            max_bd_age = float(bd.get("max_age_seconds", 900))
+            max_bd_age = float(bd.get("max_age_seconds", 7200))  # BTC_D_MAX_AGE default
             if btc_d_age > max_bd_age:
                 reasons.append(f"BTC_D_STALE age_s={btc_d_age:.0f}>{max_bd_age:.0f}")
                 btc_d_status = "STALE"

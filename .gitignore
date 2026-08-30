@@ -33,6 +33,7 @@ data/models/
 data/sim/
 data/backtest_candles/
 data/backtest_dominance/
+data/live_analytics/
 !data/.gitkeep
 
 # --- Logs & research outputs ---
@@ -46,7 +47,7 @@ results/
 *.sqlite3
 *.parquet
 
-# --- OS / IDE ---
+# --- OS & IDE ---
 .DS_Store
 Thumbs.db
 .idea/

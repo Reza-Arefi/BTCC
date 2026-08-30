@@ -77,39 +77,17 @@ class MexcPublicREST:
             })
         return pd.DataFrame(rows) if rows else pd.DataFrame(columns=COLS)
 
-    def bootstrap_symbol(
+    def _fetch_range(
         self,
         symbol: str,
         interval: str,
-        lookback_bars: int,
-        candle_dir: str,
-        force: bool = False,
-    ) -> pd.DataFrame | None:
-        path = candle_path(candle_dir, symbol, interval)
-        if not force:
-            cached = load_candles(path)
-            # Require near-full lookback — never silently accept a short cache
-            # (previous min(lookback//2, 200) short-circuited year-scale downloads).
-            min_ok = max(int(lookback_bars * 0.95), lookback_bars - 50)
-            if cached is not None and len(cached) >= min_ok:
-                tmax = cached["timestamp"].max()
-                if getattr(tmax, "tzinfo", None) is None:
-                    tmax = tmax.tz_localize("UTC")
-                age_h = (datetime.now(timezone.utc) - tmax.to_pydatetime()).total_seconds() / 3600
-                if age_h < 1.0:
-                    return cached
-
-        # Probe latest candles first — fail fast on invalid symbols
-        probe = self.fetch_klines(symbol, interval, limit=5)
-        if probe.empty:
-            logger.error("DATA_UNAVAILABLE: %s (no klines)", symbol)
-            return None
-
-        end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        start_ms: int,
+        end_ms: int,
+    ) -> list[pd.DataFrame]:
         step = INTERVAL_MS[interval] * 1000
-        need_ms = INTERVAL_MS[interval] * lookback_bars
-        cursor = end_ms - need_ms
-        frames = []
+        cursor = int(start_ms)
+        end_ms = int(end_ms)
+        frames: list[pd.DataFrame] = []
         while cursor < end_ms:
             chunk_end = min(cursor + step, end_ms)
             df = self.fetch_klines(symbol, interval, start_ms=cursor, end_ms=chunk_end)
@@ -123,10 +101,75 @@ class MexcPublicREST:
             else:
                 cursor = chunk_end + INTERVAL_MS[interval]
             time.sleep(0.05)
+        return frames
+
+    def bootstrap_symbol(
+        self,
+        symbol: str,
+        interval: str,
+        lookback_bars: int,
+        candle_dir: str,
+        force: bool = False,
+    ) -> pd.DataFrame | None:
+        """Load/extend local candle cache for ``symbol``.
+
+        Prefer incremental forward extension of an existing valid cache.
+        Never fabricates missing history. Short listing histories are kept as-is.
+        ``force=True`` still preserves existing cache rows and only re-fetches
+        to extend / fill toward ``lookback_bars`` when the exchange provides more.
+        """
+        path = candle_path(candle_dir, symbol, interval)
+        cached = load_candles(path)
+        min_ok = max(int(lookback_bars * 0.95), lookback_bars - 50)
+
+        # Probe latest candles first — fail fast on invalid symbols
+        probe = self.fetch_klines(symbol, interval, limit=5)
+        if probe.empty:
+            logger.error("DATA_UNAVAILABLE: %s (no klines)", symbol)
+            return None
+
+        end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        frames: list[pd.DataFrame] = []
+        if cached is not None and not cached.empty:
+            frames.append(cached)
+            tmax = cached["timestamp"].max()
+            if getattr(tmax, "tzinfo", None) is None:
+                tmax = tmax.tz_localize("UTC")
+            age_h = (datetime.now(timezone.utc) - tmax.to_pydatetime()).total_seconds() / 3600
+            if not force and len(cached) >= min_ok and age_h < 1.0:
+                return cached.reset_index(drop=True)
+            # Incremental forward extend from last cached bar
+            start_ms = int(tmax.timestamp() * 1000) + INTERVAL_MS[interval]
+            if start_ms < end_ms:
+                frames.extend(self._fetch_range(symbol, interval, start_ms, end_ms))
+            # Optional backfill only when cache is shorter than requested and
+            # we may still obtain older exchange history (never invent gaps).
+            if len(cached) < min_ok:
+                need_ms = INTERVAL_MS[interval] * lookback_bars
+                want_start = end_ms - need_ms
+                tmin = cached["timestamp"].min()
+                if getattr(tmin, "tzinfo", None) is None:
+                    tmin = tmin.tz_localize("UTC")
+                have_start = int(tmin.timestamp() * 1000)
+                if want_start < have_start:
+                    frames.extend(self._fetch_range(symbol, interval, want_start, have_start))
+        else:
+            need_ms = INTERVAL_MS[interval] * lookback_bars
+            cursor = end_ms - need_ms
+            frames.extend(self._fetch_range(symbol, interval, cursor, end_ms))
+
         if not frames:
             logger.error("DATA_UNAVAILABLE: %s", symbol)
             return None
-        out = pd.concat(frames).drop_duplicates("timestamp").sort_values("timestamp").tail(lookback_bars)
+        out = (
+            pd.concat(frames)
+            .drop_duplicates("timestamp", keep="last")
+            .sort_values("timestamp")
+        )
+        # NEVER truncate the on-disk cache to the caller's lookback window.
+        # Short backtests (smoke) used to call save with out.tail(lookback_bars)
+        # and permanently destroyed ~1y history. Keep all valid history; callers
+        # that need a window must slice in-memory after load.
         save_candles(out, path)
         return out.reset_index(drop=True)
 

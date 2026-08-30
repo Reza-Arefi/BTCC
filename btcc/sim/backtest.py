@@ -30,7 +30,9 @@ from btcc.backtest.data_loader import compute_window, download_panels
 from btcc.backtest.dominance_history import HistoricalDominanceSeries
 from btcc.backtest.predict import predict_coin_at_bar
 from btcc.sim.accounting import CostModel, close_long_alt_btc
+from btcc.sim.checkpoint import verify_final_checkpoint, write_daily_checkpoint, write_final_checkpoint
 from btcc.sim.config import load_sim_config
+from btcc.sim.day_axis import day_number_at
 from btcc.sim.exits import (
     leg_to_record,
     open_opportunity_legs,
@@ -128,6 +130,7 @@ def run_adaptive_sim_backtest(
         "Sim backtest mode=%s days=%d init_days=%d thr=%.2f force=%s",
         weight_mode, days, init_days, sim["long_threshold"], force_download,
     )
+    cfg = {**cfg, "sim": sim}
     panels = download_panels(cfg, days, min_warmup, force=force_download)
     btc_df = panels["btc"].copy()
     btc_df["timestamp"] = pd.to_datetime(btc_df["timestamp"], utc=True)
@@ -215,11 +218,69 @@ def run_adaptive_sim_backtest(
     max_simultaneous = {p: 0 for p in policies}
     max_open_rejects = {p: 0 for p in policies}
     n_recovered = 0
+    prev_day_number: int | None = None
+    last_flushed_day: int | None = None
+
+    def _flush_day(day_n: int, ts_end) -> None:
+        nonlocal last_flushed_day
+        if day_n is None or day_n == last_flushed_day:
+            return
+        active_v = schedule.active_at(ts_end)
+        open_snap = {
+            pol: {
+                oid: {
+                    "opportunity_id": oid,
+                    "symbol": opp.get("symbol"),
+                    "base": opp.get("base"),
+                    "logical_pair": opp.get("logical_pair"),
+                    "resolved_market": opp.get("resolved_market"),
+                    "opened_ts": opp.get("opened_ts"),
+                    "entry_policy": opp.get("entry_policy"),
+                    "S": opp.get("S"),
+                    "weight_version_id": opp.get("weight_version_id"),
+                    "n_legs_open": sum(1 for leg in opp.get("legs") or [] if not getattr(leg, "closed", True)),
+                }
+                for oid, opp in book.items()
+            }
+            for pol, book in open_books.items()
+        }
+        # Stamp day_number on legs missing it
+        for rec in leg_rows:
+            if rec.get("day_number") is None and rec.get("exit_ts") is not None:
+                try:
+                    rec["day_number"] = day_number_at(rec["exit_ts"], eval_start)
+                except Exception:
+                    rec["day_number"] = day_n
+        write_daily_checkpoint(
+            out_dir,
+            day_number=day_n,
+            simulated_timestamp=str(ts_end),
+            pred_rows=pred_rows,
+            opp_rows=opp_rows,
+            leg_rows=leg_rows,
+            weight_hist=weight_hist,
+            update_log=update_log,
+            schedule_history={"updates": schedule.history()},
+            schedule_active=active_v.to_dict(),
+            open_books_snapshot=open_snap,
+            weight_mode=weight_mode,
+            init_days=init_days,
+            eval_start=str(eval_start),
+            eval_end=str(eval_end),
+            coverage=panels.get("coverage"),
+            refresh_analytics=True,
+            telegram_enabled=False,
+        )
+        last_flushed_day = day_n
 
     for n_done, i in enumerate(decision_indices):
         t = _utc(btc_df.iloc[i]["timestamp"])
         t_local = t.tz_convert(tz)
         phase = "init" if t < init_end else "daily"
+        day_n = day_number_at(t, eval_start)
+        if prev_day_number is not None and day_n != prev_day_number:
+            _flush_day(prev_day_number, t)
+        prev_day_number = day_n
 
         if adapt and (not init_done) and t >= init_end:
             matured = filter_matured_for_learning(pred_rows, asof_ts=t, horizon_hours=horizon_h)
@@ -245,7 +306,7 @@ def run_adaptive_sim_backtest(
                     n_samples=stats.get("n_samples"), phase="init", update_number=0,
                     stats={"status": "OK", "ycol": stats.get("ycol")},
                 ))
-                _append_weight_hist(weight_hist, prev, new_w, stats, t_local, vid, "OK", "init")
+                _append_weight_hist(weight_hist, prev, new_w, stats, t_local, vid, "OK", "init", day_number=day_n)
                 update_log.append({
                     "update_number": 0, "phase": "init", "calculated_at": str(t),
                     "effective_from": str(eff),
@@ -256,7 +317,7 @@ def run_adaptive_sim_backtest(
                 })
                 logger.info("INIT weights ready calculated_at=%s effective_from=%s n=%s", t, eff, stats.get("n_samples"))
             else:
-                _append_weight_hist(weight_hist, prev, prev, stats, t_local, f"init_failed_{t.date()}", "FAILED", "init")
+                _append_weight_hist(weight_hist, prev, prev, stats, t_local, f"init_failed_{t.date()}", "FAILED", "init", day_number=day_n)
                 update_log.append({
                     "update_number": 0, "phase": "init", "calculated_at": str(t),
                     "effective_from": None, "status": "FAILED", "notes": stats.get("reason"),
@@ -293,7 +354,7 @@ def run_adaptive_sim_backtest(
                             n_samples=stats.get("n_samples"), phase="daily",
                             update_number=daily_update_number, stats={"status": "OK"},
                         ))
-                        _append_weight_hist(weight_hist, prev, new_w, stats, t_local, vid, "OK", "daily")
+                        _append_weight_hist(weight_hist, prev, new_w, stats, t_local, vid, "OK", "daily", day_number=day_n)
                         update_log.append({
                             "update_number": daily_update_number, "phase": "daily",
                             "calculated_at": str(t), "effective_from": str(eff),
@@ -303,7 +364,7 @@ def run_adaptive_sim_backtest(
                             "weights": new_w, "old_weights": prev,
                         })
                     else:
-                        _append_weight_hist(weight_hist, prev, prev, stats, t_local, vid, "FAILED", "daily")
+                        _append_weight_hist(weight_hist, prev, prev, stats, t_local, vid, "FAILED", "daily", day_number=day_n)
                         update_log.append({
                             "update_number": daily_update_number, "phase": "daily",
                             "calculated_at": str(t), "effective_from": None,
@@ -369,6 +430,8 @@ def run_adaptive_sim_backtest(
             scored = combined_score(factor_scores, weights)
             S = float(scored["S"])
             pair = coin["symbol"]
+            logical_pair = coin.get("logical_pair", base)
+            resolved_market = coin.get("resolved_market", pair)
 
             # Shared prediction row fields; per-policy decisions appended below
             policy_decisions = {}
@@ -413,6 +476,8 @@ def run_adaptive_sim_backtest(
                             "opportunity_id": opportunity_id,
                             "symbol": pair,
                             "base": base,
+                            "logical_pair": logical_pair,
+                            "resolved_market": resolved_market,
                             "S": S,
                             "opened_ts": str(t),
                             "entry_fill_ts": str(entry_ts),
@@ -435,8 +500,11 @@ def run_adaptive_sim_backtest(
                             "opportunity_id": opportunity_id,
                             "opened_ts": str(t),
                             "signal_timestamp": str(t),
+                            "day_number": day_n,
                             "symbol": pair,
                             "base": base,
+                            "logical_pair": logical_pair,
+                            "resolved_market": resolved_market,
                             "S": S,
                             "threshold": sm.long_threshold,
                             "entry_fill_ts": str(entry_ts),
@@ -489,8 +557,11 @@ def run_adaptive_sim_backtest(
             for pol, pd_dec in policy_decisions.items():
                 pred_rows.append({
                     "timestamp": str(t),
+                    "day_number": day_n,
                     "symbol": pair,
                     "base": base,
+                    "logical_pair": logical_pair,
+                    "resolved_market": resolved_market,
                     "phase": phase,
                     "weight_mode": weight_mode,
                     "entry_policy": pol,
@@ -527,9 +598,14 @@ def run_adaptive_sim_backtest(
 
         if n_done and n_done % 250 == 0:
             logger.info(
-                "Sim %s %d/%d phase=%s open=%d preds=%d",
-                weight_mode, n_done, len(decision_indices), phase, sum(s.n_open() for s in sms.values()), len(pred_rows),
+                "Sim %s %d/%d phase=%s day=%s open=%d preds=%d",
+                weight_mode, n_done, len(decision_indices), phase, day_n,
+                sum(s.n_open() for s in sms.values()), len(pred_rows),
             )
+
+    # Flush final simulated day
+    if prev_day_number is not None and decision_indices:
+        _flush_day(prev_day_number, _utc(btc_df.iloc[decision_indices[-1]]["timestamp"]))
 
     for pol in policies:
         for oid, opp in list(open_books[pol].items()):
@@ -605,6 +681,8 @@ def run_adaptive_sim_backtest(
         "eval_end": str(eval_end),
         "init_start": str(eval_start),
         "init_end": str(init_end),
+        "init_days": init_days,
+        "roll_days": roll_days,
         "daily_phase_start": str(init_end),
         "n_weight_updates": len(update_log),
         "n_daily_updates": daily_update_number,
@@ -613,6 +691,18 @@ def run_adaptive_sim_backtest(
             else ("static_fixed_weights" if weight_mode == "static" else "equal_fixed_weights")
         ),
         "universe_policy": sim.get("universe_policy"),
+        "pair_coverage": panels.get("coverage") or {},
+        "coverage_note": (
+            "Fixed research universe of 20 bases. Individual pairs may list mid-window; "
+            "predictions are emitted only when >=100 bars of history exist at decision time. "
+            "No fabricated / forward-filled candles. Short-history pairs (e.g. CKBTC, DATA) "
+            "do not contribute observations before first usable prediction timestamp and "
+            "therefore cannot contaminate adaptive weight updates for earlier periods. "
+            "Adaptive learning still uses configured min_observations_* gates."
+        ),
+        "requested_days": days,
+        "actual_normal_pair_coverage_days": _normal_pair_coverage_days(panels),
+        "experiment_label": _experiment_label(days, panels),
         "btc_d": {
             "source": (dom_series.meta or {}).get("source"),
             "representation": (dom_series.meta or {}).get("representation"),
@@ -624,6 +714,9 @@ def run_adaptive_sim_backtest(
         "seed_weights": seed_w,
     })
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    (out_dir / "pair_coverage.json").write_text(
+        json.dumps(panels.get("coverage") or {}, indent=2, default=str), encoding="utf-8"
+    )
     (out_dir / "report.md").write_text(_report_md(summary, sim, update_log), encoding="utf-8")
     write_run_fingerprint(
         out_dir,
@@ -634,14 +727,64 @@ def run_adaptive_sim_backtest(
         candle_dir=Path(cfg["backtest_data"]["candle_dir"]),
         dominance_cache_dir=Path(cfg["backtest_data"]["dominance_cache"]),
     )
-    logger.info("Sim backtest complete mode=%s → %s", weight_mode, out_dir)
+    # Formal live handoff checkpoint
+    try:
+        import subprocess
+        git_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+    except Exception:
+        git_commit = None
+    fp = None
+    fp_path = out_dir / "fingerprint.json"
+    if fp_path.exists():
+        fp = json.loads(fp_path.read_text(encoding="utf-8"))
+    final = write_final_checkpoint(
+        out_dir,
+        summary=summary,
+        fingerprint=fp,
+        last_day_number=last_flushed_day or prev_day_number,
+        git_commit=git_commit or (fp or {}).get("git_commit"),
+    )
+    v = verify_final_checkpoint(final)
+    summary["final_checkpoint"] = {"path": str(final), "verify": v}
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    logger.info("Sim backtest complete mode=%s → %s (FINAL_CHECKPOINT ok=%s)", weight_mode, out_dir, v.get("ok"))
     return out_dir
 
 
-def _append_weight_hist(hist, old_w, new_w, stats, t_local, vid, status, phase):
+def _normal_pair_coverage_days(panels: dict) -> float | None:
+    """Median available_days among non-listing-short synthetic pairs."""
+    cov = panels.get("coverage") or {}
+    days = [
+        float(v["available_days"])
+        for v in cov.values()
+        if v.get("available_days") and float(v["available_days"]) >= 300
+    ]
+    if not days:
+        days = [float(v["available_days"]) for v in cov.values() if v.get("available_days")]
+    if not days:
+        return None
+    days_sorted = sorted(days)
+    return days_sorted[len(days_sorted) // 2]
+
+
+def _experiment_label(requested_days: int, panels: dict) -> str:
+    actual = _normal_pair_coverage_days(panels)
+    if actual is None:
+        return f"requested_{requested_days}d_historical_backtest"
+    return (
+        f"approximately 1-year historical backtest "
+        f"with approximately {actual:.0f} days of normal-pair coverage "
+        f"(requested_days={requested_days})"
+    )
+
+
+def _append_weight_hist(hist, old_w, new_w, stats, t_local, vid, status, phase, day_number=None):
     for ind in (new_w or old_w):
         hist.append({
             "update_timestamp": t_local.isoformat(),
+            "day_number": day_number,
             "update_id": vid,
             "phase": phase,
             "indicator": ind,
@@ -683,6 +826,12 @@ def _advance_book(open_book, sm, panels, btc_close, costs, sim, asof_t, leg_rows
                 rec["entry_policy"] = opp.get("entry_policy")
                 rec["recovered_by_late_allowed"] = bool(opp.get("recovered_by_late_allowed"))
                 rec["entry_classification"] = opp.get("entry_classification")
+                if rec.get("exit_ts") is not None:
+                    try:
+                        # day_number relative to eval requires caller context; leave for flush stamp
+                        rec.setdefault("day_number", None)
+                    except Exception:
+                        pass
                 leg_rows.append(rec)
             sm.register_close(oid, opp.get("symbol"))
             done.append(oid)
@@ -797,7 +946,7 @@ def _report_md(summary: dict[str, Any], sim: dict[str, Any], update_log: list) -
     lines = [
         "# BTCC Adaptive V2 Backtest Report",
         "",
-        "**PAPER ONLY — LONG ALT/BTC — 90d init + daily rolling 90d**",
+        f"**PAPER ONLY — LONG ALT/BTC — {summary.get('experiment_label', 'historical backtest')}**",
         "",
         f"- Protocol: `{summary.get('protocol')}`",
         f"- Eval: {summary.get('eval_start')} → {summary.get('eval_end')}",
@@ -811,6 +960,28 @@ def _report_md(summary: dict[str, Any], sim: dict[str, Any], update_log: list) -
         f"- Universe: {(summary.get('universe_policy') or {}).get('mode')} "
         f"(bias={(summary.get('universe_policy') or {}).get('survivorship_bias')})",
         "",
+        "## Time-varying pair availability",
+        "",
+        summary.get("coverage_note") or "",
+        "",
+        f"- Requested days: {summary.get('requested_days')}",
+        f"- Normal-pair coverage (approx): {summary.get('actual_normal_pair_coverage_days')} days",
+        "",
+    ]
+    cov = summary.get("pair_coverage") or {}
+    if cov:
+        lines.append("| logical | resolved | first | last | days | candles | init90 | daily |")
+        lines.append("|---|---|---|---|---:|---:|---|---|")
+        for base in sorted(cov):
+            c = cov[base]
+            lines.append(
+                f"| {c.get('logical_pair', base)} | {c.get('resolved_market')} | "
+                f"{c.get('first_timestamp')} | {c.get('last_timestamp')} | "
+                f"{c.get('available_days'):.1f} | {c.get('candle_count')} | "
+                f"{c.get('usable_for_initial_90d')} | {c.get('usable_for_daily_adaptation')} |"
+            )
+        lines.append("")
+    lines += [
         "## Weight updates",
         "",
     ]

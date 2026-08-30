@@ -27,6 +27,7 @@ from btcc.universe import (
     build_universe_audit,
     format_universe_audit,
     resolve_btc_market,
+    resolve_data_market,
     resolve_usdt_symbol,
 )
 
@@ -122,29 +123,41 @@ class SignalEngine:
             logger.info("Loaded %s (%d bars)", btc_sym, len(df_btc))
 
         for base in self.cfg["universe"]["bases"]:
+            meta = resolve_data_market(base, self.cfg)
+            resolved = meta["resolved_market"]
             usdt = resolve_usdt_symbol(base, self.cfg)
             btc_mkt = resolve_btc_market(base, self.cfg)
-            df = self.rest.bootstrap_symbol(usdt, self.interval, self.lookback, self.candle_dir)
+            df = self.rest.bootstrap_symbol(
+                resolved, self.interval, self.lookback, self.candle_dir
+            )
             if df is not None and not df.empty:
-                self.panels[usdt] = df
-                self.construction[base] = f"{usdt} / BTCUSDT"
-                logger.info("Loaded %s (%d bars) construction=%s", usdt, len(df), self.construction[base])
-                continue
-            self.unavailable.add(usdt)
-            # Fallback: native BTC-quoted market (exact research market)
-            native = self.rest.bootstrap_symbol(btc_mkt, self.interval, self.lookback, self.candle_dir)
-            if native is not None and not native.empty:
-                self.native_btc_panels[base] = native
-                self.panels[btc_mkt] = native
-                self.construction[base] = f"native {btc_mkt} (no USDT pair)"
+                self.panels[resolved] = df
+                self.construction[base] = meta["construction"]
+                if meta["mode"] == "native_btc":
+                    self.native_btc_panels[base] = df
                 logger.info(
-                    "Loaded native %s (%d bars) — USDT %s unavailable",
-                    btc_mkt, len(native), usdt,
+                    "Loaded %s logical=%s (%d bars) construction=%s",
+                    resolved, base, len(df), self.construction[base],
                 )
-            else:
+                continue
+            self.unavailable.add(resolved)
+            # Synthetic pairs only: one native fallback if USDT vanished
+            if meta["mode"] == "synthetic_usdt":
+                native = self.rest.bootstrap_symbol(
+                    btc_mkt, self.interval, self.lookback, self.candle_dir
+                )
+                if native is not None and not native.empty:
+                    self.native_btc_panels[base] = native
+                    self.panels[btc_mkt] = native
+                    self.construction[base] = f"native {btc_mkt} (no USDT pair)"
+                    logger.info(
+                        "Loaded native %s (%d bars) — USDT %s unavailable",
+                        btc_mkt, len(native), usdt,
+                    )
+                    continue
                 self.unavailable.add(btc_mkt)
-                self.construction[base] = "DATA_UNAVAILABLE"
-                logger.error("DATA_UNAVAILABLE: %s and fallback %s", usdt, btc_mkt)
+            self.construction[base] = "DATA_UNAVAILABLE"
+            logger.error("DATA_UNAVAILABLE: logical=%s resolved=%s", base, resolved)
 
         self.dominance.fetch(force=True)
         self.last_universe_audit = build_universe_audit(
@@ -258,18 +271,30 @@ class SignalEngine:
         alt_btc_panels = {}
 
         for base in self.cfg["universe"]["bases"]:
+            meta = resolve_data_market(base, self.cfg)
+            resolved = meta["resolved_market"]
             usdt = resolve_usdt_symbol(base, self.cfg)
             btc_mkt = resolve_btc_market(base, self.cfg)
-            mode = self.construction.get(base, "")
+            mode = self.construction.get(base, meta["construction"])
             warnings: list[str] = []
             rel = None
             alt_for_volume = None
-            sym_key = usdt
+            sym_key = resolved
 
-            if usdt in self.panels:
+            if resolved in self.panels:
+                alt = self._completed_frame(self.panels[resolved])
+                alt_for_volume = alt
+                if meta["mode"] == "native_btc" or base in self.native_btc_panels:
+                    rel = native_btc_as_relative(alt)
+                    mode = f"native {resolved}"
+                else:
+                    rel = build_alt_btc(alt, btc)
+                    mode = f"{resolved} / BTCUSDT"
+            elif usdt in self.panels:
                 alt = self._completed_frame(self.panels[usdt])
                 alt_for_volume = alt
                 rel = build_alt_btc(alt, btc)
+                sym_key = usdt
                 mode = f"{usdt} / BTCUSDT"
             elif base in self.native_btc_panels:
                 native = self._completed_frame(self.native_btc_panels[base])
@@ -316,15 +341,17 @@ class SignalEngine:
                 if factors[name].get("insufficient_data"):
                     warnings.append(f"{name}_INSUFFICIENT_DATA")
             alt_usdt_px = None
-            if usdt in self.panels and "close" in self.panels[usdt].columns:
+            if meta["mode"] == "synthetic_usdt" and resolved in self.panels and "close" in self.panels[resolved].columns:
                 try:
-                    alt_usdt_px = float(self._completed_frame(self.panels[usdt])["close"].iloc[-1])
+                    alt_usdt_px = float(self._completed_frame(self.panels[resolved])["close"].iloc[-1])
                 except Exception:
                     alt_usdt_px = None
             rows.append({
                 "timestamp": ts,
                 "symbol": sym_key,
                 "base": base,
+                "logical_pair": meta["logical_pair"],
+                "resolved_market": sym_key,
                 "p_1h": probs["p_1h"],
                 "p_4h": probs["p_4h"],
                 "p_8h": probs["p_8h"],

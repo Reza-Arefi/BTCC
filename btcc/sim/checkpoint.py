@@ -38,6 +38,7 @@ def summarize_day(
     open_count: int,
     weight_mode: str,
     init_days: int,
+    starting_capital_usd: float = 1000.0,
 ) -> dict[str, Any]:
     """Machine-readable daily summary (as-of end of day_number)."""
     day_pred = (
@@ -168,6 +169,24 @@ def summarize_day(
             "phase": last.get("phase"),
             "status": last.get("status"),
         }
+    try:
+        from btcc.analytics.capital import capital_daily_series
+
+        cap = capital_daily_series(
+            legs_df,
+            starting_capital_usd=float(starting_capital_usd),
+            max_day=int(day_number),
+        )
+        if not cap.empty:
+            # Keep only the current day rows for the summary payload
+            today = cap[cap["day_number"] == int(day_number)]
+            summary["capital"] = {
+                "starting_capital_usd": float(starting_capital_usd),
+                "asof_day": int(day_number),
+                "accounts": today.to_dict(orient="records"),
+            }
+    except Exception:
+        pass
     return summary
 
 
@@ -191,6 +210,7 @@ def write_daily_checkpoint(
     coverage: dict[str, Any] | None = None,
     refresh_analytics: bool = True,
     telegram_enabled: bool = False,
+    starting_capital_usd: float = 1000.0,
 ) -> Path:
     """Persist append-only day checkpoint + refresh as-of analytics/plots."""
     if telegram_enabled:
@@ -231,6 +251,7 @@ def write_daily_checkpoint(
         open_count=open_count,
         weight_mode=weight_mode,
         init_days=init_days,
+        starting_capital_usd=starting_capital_usd,
     )
     daily["eval_start"] = eval_start
     daily["eval_end_requested"] = eval_end
@@ -292,6 +313,7 @@ def write_daily_checkpoint(
                 eval_start=eval_start,
                 telegram_enabled=False,
                 analytics_root=out_dir / "analytics",
+                starting_capital_usd=starting_capital_usd,
             )
             # Snapshot as-of plots into the day folder (append-only history).
             src_plots = out_dir / "analytics" / "plots" / weight_mode

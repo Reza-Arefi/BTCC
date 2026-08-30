@@ -270,6 +270,7 @@ def run_adaptive_sim_backtest(
             coverage=panels.get("coverage"),
             refresh_analytics=True,
             telegram_enabled=False,
+            starting_capital_usd=float(sim.get("starting_capital_usd", 1000.0)),
         )
         last_flushed_day = day_n
 

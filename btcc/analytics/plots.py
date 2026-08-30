@@ -592,6 +592,74 @@ def plot_entry_future_returns(pred: pd.DataFrame, plots_dir: Path) -> Path | Non
     return p
 
 
+def plot_compounded_capital(
+    daily_by_label: dict[str, pd.DataFrame],
+    plots_dir: Path,
+    *,
+    strategy_key: str,
+    starting_capital_usd: float = 1000.0,
+    init_days: int | None = 90,
+) -> Path | None:
+    """Portfolio value ($) from starting_capital vs Day — one figure per exit strategy."""
+    fig, ax = plt.subplots(figsize=(11, 5))
+    any_line = False
+    for label, df in daily_by_label.items():
+        if df is None or df.empty:
+            continue
+        g = df[df["strategy_key"] == strategy_key] if "strategy_key" in df.columns else df
+        if g.empty or "day_number" not in g.columns:
+            continue
+        g = g.sort_values("day_number")
+        ax.plot(g["day_number"], g["ending_value"], label=label, lw=1.4)
+        any_line = True
+    if not any_line:
+        plt.close(fig)
+        return None
+    _mark_init_day(ax, init_days)
+    ax.axhline(starting_capital_usd, color="#888", ls=":", lw=1, alpha=0.8)
+    ax.set_xlabel("Day")
+    ax.set_ylabel("Simulated Portfolio Value ($)")
+    ax.set_title(f"Compounded ${starting_capital_usd:,.0f} — {strategy_key}")
+    ax.legend(fontsize=8)
+    p = plots_dir / f"compounded_capital_{strategy_key}.png"
+    _save(fig, p)
+    return p
+
+
+def plot_cumulative_pl_pct(
+    daily_by_label: dict[str, pd.DataFrame],
+    plots_dir: Path,
+    *,
+    strategy_key: str,
+    starting_capital_usd: float = 1000.0,
+    init_days: int | None = 90,
+) -> Path | None:
+    """Cumulative P/L (%) vs Day — one figure per exit strategy."""
+    fig, ax = plt.subplots(figsize=(11, 5))
+    any_line = False
+    for label, df in daily_by_label.items():
+        if df is None or df.empty:
+            continue
+        g = df[df["strategy_key"] == strategy_key] if "strategy_key" in df.columns else df
+        if g.empty or "day_number" not in g.columns:
+            continue
+        g = g.sort_values("day_number")
+        ax.plot(g["day_number"], g["cumulative_return_pct"], label=label, lw=1.4)
+        any_line = True
+    if not any_line:
+        plt.close(fig)
+        return None
+    _mark_init_day(ax, init_days)
+    ax.axhline(0, color="black", lw=0.8)
+    ax.set_xlabel("Day")
+    ax.set_ylabel("Cumulative P/L (%)")
+    ax.set_title(f"Cumulative P/L (%) from ${starting_capital_usd:,.0f} — {strategy_key}")
+    ax.legend(fontsize=8)
+    p = plots_dir / f"cumulative_pl_pct_{strategy_key}.png"
+    _save(fig, p)
+    return p
+
+
 def plot_win_loss_bars(wl_by_arm: dict[str, pd.DataFrame], plots_dir: Path) -> Path | None:
     # Stack net PnL by arm × strategy
     rows = []

@@ -32,6 +32,10 @@ sim:
   # Virtual capital per opportunity (comparable across strategies)
   notional_usd: 100.0
   compound_notional: false
+  # Standardized starting portfolio for each independent
+  # (arm × entry_policy × exit_strategy) simulation account.
+  # Opportunity sizing remains notional_usd; this tracks compounded P/L from $1,000.
+  starting_capital_usd: 1000.0
 
   # Costs — applied identically to all three exit strategies
   fee_rate_per_side: 0.0010         # 0.10%

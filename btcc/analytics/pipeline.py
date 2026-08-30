@@ -13,6 +13,7 @@ import pandas as pd
 
 from btcc.analytics import metrics as M
 from btcc.analytics import plots as P
+from btcc.analytics.capital import capital_daily_series
 from btcc.analytics.daily import write_daily_snapshot
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ def build_arm_analytics(
     max_open: int = 10,
     telegram_enabled: bool = False,
     init_days: int | None = 90,
+    starting_capital_usd: float = 1000.0,
 ) -> Path:
     """Build metrics+plots for one arm into analytics_root (or arm_dir/analytics)."""
     arm_dir = Path(arm_dir)
@@ -151,6 +153,23 @@ def build_arm_analytics(
     P.plot_entry_classification_scores(pred, plot_dir)
     P.plot_entry_future_returns(pred, plot_dir)
 
+    # $1,000 compounded capital curves (per entry policy × strategy within this arm)
+    cap_daily = capital_daily_series(legs, starting_capital_usd=starting_capital_usd)
+    if not cap_daily.empty:
+        _save_df(cap_daily, dirs["metrics"] / f"{arm}_capital_daily.csv")
+        for pol in sorted(cap_daily["entry_policy"].dropna().unique()):
+            sub = cap_daily[cap_daily["entry_policy"] == pol]
+            label = f"{arm}/{pol}"
+            for sk in ("strategy_1", "strategy_2", "strategy_3"):
+                P.plot_compounded_capital(
+                    {label: sub}, plot_dir, strategy_key=sk,
+                    starting_capital_usd=starting_capital_usd, init_days=init_days,
+                )
+                P.plot_cumulative_pl_pct(
+                    {label: sub}, plot_dir, strategy_key=sk,
+                    starting_capital_usd=starting_capital_usd, init_days=init_days,
+                )
+
     write_daily_snapshot(
         dirs["daily_snapshots"],
         arm=arm,
@@ -177,6 +196,7 @@ def build_arm_analytics_asof(
     analytics_root: Path | str | None = None,
     max_open: int = 10,
     telegram_enabled: bool = False,
+    starting_capital_usd: float = 1000.0,
 ) -> Path:
     """Rebuild arm analytics/plots using only data with day_number <= day_number."""
     if telegram_enabled:
@@ -269,6 +289,24 @@ def build_arm_analytics_asof(
     P.plot_entry_policy_win_rate(legs, plot_dir)
     P.plot_recovered_trades(legs, plot_dir)
 
+    cap_daily = capital_daily_series(
+        legs, starting_capital_usd=starting_capital_usd, max_day=day_number,
+    )
+    if not cap_daily.empty:
+        _save_df(cap_daily, dirs["metrics"] / f"{arm}_capital_daily.csv")
+        for pol in sorted(cap_daily["entry_policy"].dropna().unique()):
+            sub = cap_daily[cap_daily["entry_policy"] == pol]
+            label = f"{arm}/{pol}"
+            for sk in ("strategy_1", "strategy_2", "strategy_3"):
+                P.plot_compounded_capital(
+                    {label: sub}, plot_dir, strategy_key=sk,
+                    starting_capital_usd=starting_capital_usd, init_days=init_days,
+                )
+                P.plot_cumulative_pl_pct(
+                    {label: sub}, plot_dir, strategy_key=sk,
+                    starting_capital_usd=starting_capital_usd, init_days=init_days,
+                )
+
     snap = {
         "day_number": day_number,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -293,6 +331,7 @@ def build_abc_analytics(
     max_open: int = 10,
     telegram_enabled: bool = False,
     init_days: int | None = 90,
+    starting_capital_usd: float = 1000.0,
 ) -> Path:
     """Build comparison analytics for an ABC result directory."""
     cmp_dir = Path(cmp_dir)
@@ -326,6 +365,7 @@ def build_abc_analytics(
             max_open=max_open,
             telegram_enabled=False,
             init_days=arm_init,
+            starting_capital_usd=starting_capital_usd,
         )
 
     # Comparison overlays
@@ -351,6 +391,27 @@ def build_abc_analytics(
         if not adv.empty:
             _save_df(adv, dirs["metrics"] / f"adaptive_advantage_{sk}.csv")
             P.plot_adaptive_advantage(adv, dirs["plots"], sk)
+
+    # Cross-arm capital overlays: Static/Equal/Adaptive × Normal/Late per strategy
+    cap_labels: dict[str, pd.DataFrame] = {}
+    for arm, ad in arm_dirs.items():
+        tables = M.load_arm_tables(ad)
+        cd = capital_daily_series(tables["legs"], starting_capital_usd=starting_capital_usd)
+        if cd.empty:
+            continue
+        _save_df(cd, dirs["metrics"] / f"compare_capital_daily_{arm}.csv")
+        for pol in sorted(cd["entry_policy"].dropna().unique()):
+            cap_labels[f"{arm}/{pol}"] = cd[cd["entry_policy"] == pol]
+    if cap_labels:
+        for sk in ("strategy_1", "strategy_2", "strategy_3"):
+            P.plot_compounded_capital(
+                cap_labels, dirs["plots"], strategy_key=sk,
+                starting_capital_usd=starting_capital_usd, init_days=init_days,
+            )
+            P.plot_cumulative_pl_pct(
+                cap_labels, dirs["plots"], strategy_key=sk,
+                starting_capital_usd=starting_capital_usd, init_days=init_days,
+            )
 
     # Combined daily snapshot (all arms)
     write_daily_snapshot(

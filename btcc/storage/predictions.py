@@ -45,6 +45,18 @@ class PredictionStore:
     def append_many(self, rows: list[dict[str, Any]]) -> None:
         if not rows:
             return
+        if not self.df.empty and "timestamp" in self.df.columns and "symbol" in self.df.columns:
+            keys = {
+                (str(t), str(s))
+                for t, s in zip(self.df["timestamp"].astype(str), self.df["symbol"].astype(str))
+            }
+            before = len(rows)
+            rows = [r for r in rows if (str(r.get("timestamp")), str(r.get("symbol"))) not in keys]
+            skipped = before - len(rows)
+            if skipped:
+                logger.info("Skipped %d duplicate legacy predictions (timestamp,symbol)", skipped)
+            if not rows:
+                return
         self.df = pd.concat([self.df, pd.DataFrame(rows)], ignore_index=True)
         self.save()
 

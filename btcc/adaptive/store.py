@@ -59,6 +59,18 @@ class AdaptivePredictionStore:
             return 0
         for r in rows:
             r.setdefault("prediction_id", str(uuid.uuid4()))
+        if not self.df.empty and "timestamp" in self.df.columns and "symbol" in self.df.columns:
+            keys = {
+                (str(t), str(s))
+                for t, s in zip(self.df["timestamp"].astype(str), self.df["symbol"].astype(str))
+            }
+            before = len(rows)
+            rows = [r for r in rows if (str(r.get("timestamp")), str(r.get("symbol"))) not in keys]
+            skipped = before - len(rows)
+            if skipped:
+                logger.info("Skipped %d duplicate adaptive predictions (timestamp,symbol)", skipped)
+            if not rows:
+                return 0
         self.df = pd.concat([self.df, pd.DataFrame(rows)], ignore_index=True)
         self.save()
         return len(rows)

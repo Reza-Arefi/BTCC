@@ -80,7 +80,8 @@ def btc_regime_factor(
         "dom_change_12h": dom_changes.get(12),
         "dom_change_24h": dom_changes.get(24),
         "dominance_source_note": (
+            "relative_btc_share_of_top_n (same live+backtest); "
             "slow_moving_macro_factor; missing horizon changes are INSUFFICIENT_DATA "
-            "(never interpolated)"
+            "(never interpolated); not absolute global BTC.D"
         ),
     }

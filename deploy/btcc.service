@@ -1,0 +1,47 @@
+# BTCC continuous signal + Adaptive V2 paper simulation
+# SIGNAL ONLY — safety.allow_trading must remain false (enforced in code).
+#
+# Install: sudo bash scripts/install_btcc_service.sh
+# Ops:     systemctl status|start|stop|restart btcc
+# Logs:    journalctl -u btcc -f
+
+[Unit]
+Description=BTCC BTC Relative-Strength Signal Bot (paper sim, no trading)
+Documentation=file:///opt/dlami/nvme/tmp_storage/LCADAME/BTCC/docs/OPERATIONS.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/dlami/nvme/tmp_storage/LCADAME/BTCC
+
+# Secrets (Telegram etc.) — never commit .env
+EnvironmentFile=-/opt/dlami/nvme/tmp_storage/LCADAME/BTCC/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=BTCC_SERVICE=1
+
+# Absolute venv interpreter so PATH cannot accidentally pick another python
+ExecStart=/opt/dlami/nvme/tmp_storage/LCADAME/BTCC/.venv/bin/python -m btcc.main run
+
+# Crash / reboot recovery
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=60
+KillMode=mixed
+KillSignal=SIGINT
+
+# Hardening (no new privileges; still needs network for MEXC/CoinGecko/Telegram)
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Persistent logs also via journald; optional file redirect
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=btcc
+
+[Install]
+WantedBy=multi-user.target

@@ -74,11 +74,12 @@ data:
   mexc_ws: wss://wbs.mexc.com/ws
   candle_dir: data/candles
   prediction_dir: data/predictions
-  # BTC dominance: CoinGecko global market (documented; MEXC has no native dominance feed)
-  dominance_source: coingecko_global
-  dominance_url: https://api.coingecko.com/api/v3/global
+  # BTC dominance: RELATIVE top-N proxy (same formula as backtest).
+  # NOT CoinGecko /global absolute dominance.
+  dominance_source: coingecko_top_coins_relative
+  dominance_url: https://api.coingecko.com/api/v3/coins/markets
   dominance_poll_seconds: 300
-  dominance_history_path: data/predictions/dominance_history.json
+  dominance_history_path: data/predictions/dominance_history_relative.json
 
 factors:
   weights:
@@ -116,8 +117,12 @@ probability:
 telegram:
   enabled: true
   # Set via env: BTCC_TELEGRAM_BOT_TOKEN, BTCC_TELEGRAM_CHAT_ID
-  send_ranking_every_cycle: true
-  send_exhaustion_alerts: true
+  # Live: do NOT spam every 15m prediction — ops events + daily summary only
+  send_ranking_every_cycle: false
+  send_exhaustion_alerts: false
+  send_daily_summary: true
+  daily_summary_hour_local: 23
+  daily_summary_timezone: America/Sao_Paulo
 
 safety:
   allow_trading: false

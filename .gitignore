@@ -30,6 +30,7 @@ htmlcov/
 data/candles/
 data/predictions/
 data/models/
+data/sim/
 data/backtest_candles/
 data/backtest_dominance/
 !data/.gitkeep

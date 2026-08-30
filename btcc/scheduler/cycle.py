@@ -30,6 +30,13 @@ from btcc.universe import (
     resolve_usdt_symbol,
 )
 
+try:
+    from btcc.sim.engine import AdaptiveSimEngine
+except Exception:  # pragma: no cover - sim package always present in tree
+    AdaptiveSimEngine = None  # type: ignore
+
+from btcc.runtime_persist import RuntimeState
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,6 +89,26 @@ class SignalEngine:
                 "Adaptive learning enabled | champion=%s | store=%s",
                 self.champion.version if self.champion else "none (run adaptive-bootstrap)",
                 pred_path,
+            )
+        # Adaptive V2 — LONG ALT/BTC virtual sim (separate from Champion archive)
+        self.sim_engine = None
+        sim_cfg = cfg.get("sim") or {}
+        rt_path = (sim_cfg.get("storage") or {}).get(
+            "runtime_state_path", "data/sim/runtime_state.json"
+        )
+        root = Path(cfg.get("_root") or ".")
+        self.runtime = RuntimeState(root / rt_path if not Path(rt_path).is_absolute() else Path(rt_path))
+        if AdaptiveSimEngine is not None and sim_cfg.get("enabled", False):
+            self.sim_engine = AdaptiveSimEngine(
+                cfg,
+                sim_cfg,
+                tg_send=self.tg.send,
+            )
+            logger.info(
+                "Adaptive V2 sim enabled | threshold=%.2f | max_open=%d | weights=%s",
+                float(sim_cfg.get("long_threshold", 0.60)),
+                int(sim_cfg.get("max_open_opportunities", 10)),
+                self.sim_engine.weights_version(),
             )
 
     def bootstrap(self) -> None:
@@ -168,31 +195,63 @@ class SignalEngine:
 
     def run_cycle(self) -> list[dict[str, Any]]:
         self.refresh_latest()
-        dom = self.dominance.fetch()
-        dominance_pct = dom.btc_dominance_pct if dom else None
+
+        if self.btc is None or self.btc.empty:
+            logger.error("DATA_UNAVAILABLE: BTCUSDT")
+            self.runtime.mark_cycle_failure("DATA_UNAVAILABLE: BTCUSDT")
+            return []
+
+        btc = self._completed_frame(self.btc)
+        ts = pd.Timestamp(btc["timestamp"].iloc[-1])
+        ts_key = str(ts)
+        if self.runtime.already_processed(ts_key):
+            logger.info(
+                "Decision candle %s already processed — skip (resume from next closed bar)",
+                ts_key,
+            )
+            self.last_data_meta = {
+                "decision_candle_ts": ts_key,
+                "skipped_duplicate": True,
+                "btc_age": None,
+                "unavailable": sorted(self.unavailable),
+            }
+            return []
+
+        decision_dt = ts.to_pydatetime()
+        if decision_dt.tzinfo is None:
+            decision_dt = decision_dt.replace(tzinfo=timezone.utc)
+
+        # Relative BTC.D — same definition as backtest; stamp / resolve at decision_ts
+        # so a future observation cannot enter an earlier 15m prediction.
+        self.dominance.fetch(force=True, as_of=decision_dt)
+        dom_snap, dom_obs_ts, dom_status = self.dominance.observation_at(decision_dt)
+        dominance_pct = dom_snap.btc_dominance_pct if dom_snap else None
+        dom = dom_snap  # compat for later getattr
         dom_raw = {
-            1: self.dominance.change(1),
-            4: self.dominance.change(4),
-            12: self.dominance.change(12),
-            24: self.dominance.change(24),
+            1: self.dominance.change(1, as_of=decision_dt),
+            4: self.dominance.change(4, as_of=decision_dt),
+            12: self.dominance.change(12, as_of=decision_dt),
+            24: self.dominance.change(24, as_of=decision_dt),
         }
         # Pass numeric changes (or None) into factors; keep statuses for audit/Telegram
         dom_changes = {h: v for h, (v, _s) in dom_raw.items()}
         dom_statuses = {h: s for h, (_v, s) in dom_raw.items()}
         self.last_dominance_summary = {
             **self.dominance.summary(),
+            "btc_dominance_pct": dominance_pct,
+            "asof": dom_obs_ts.isoformat() if dom_obs_ts else None,
+            "observation_status": dom_status,
+            "decision_candle_ts": ts_key,
             "change_1h_pp": dom_raw[1][0],
             "change_1h_status": dom_raw[1][1],
             "change_12h_pp": dom_raw[12][0],
             "change_12h_status": dom_raw[12][1],
+            "change_4h_pp": dom_raw[4][0],
+            "change_4h_status": dom_raw[4][1],
+            "change_24h_pp": dom_raw[24][0],
+            "change_24h_status": dom_raw[24][1],
         }
 
-        if self.btc is None or self.btc.empty:
-            logger.error("DATA_UNAVAILABLE: BTCUSDT")
-            return []
-
-        btc = self._completed_frame(self.btc)
-        ts = pd.Timestamp(btc["timestamp"].iloc[-1])
         now = datetime.now(timezone.utc)
         btc_age = now - ts.to_pydatetime().replace(tzinfo=timezone.utc) if ts.tzinfo is None else now - ts.to_pydatetime()
         rows = []
@@ -359,6 +418,42 @@ class SignalEngine:
                 float(self.cfg["late_entry"]["alert_threshold"]),
                 int(self.cfg["late_entry"]["alert_cooldown_minutes"]),
             )
+
+        # Adaptive V2: signed score S, crossing SM, virtual LONG ALT/BTC sims
+        if self.sim_engine is not None and ranked:
+            try:
+                dom_ts = dom_obs_ts
+                dom_src = getattr(dom, "source", None) if dom is not None else None
+                self.sim_engine.process_ranked_cycle(
+                    ranked,
+                    decision_ts=ts,
+                    rel_panels=alt_btc_panels,
+                    btc_df=btc,
+                    dominance_pct=dominance_pct,
+                    dominance_ts=dom_ts,
+                    dominance_source=dom_src,
+                )
+            except Exception as e:
+                logger.exception("Adaptive V2 sim cycle failed: %s", e)
+                try:
+                    self.sim_engine.alerter.runtime_error(f"sim_cycle: {e}")
+                except Exception:
+                    pass
+
+        wver = None
+        health_ok = None
+        if self.sim_engine is not None:
+            try:
+                wver = self.sim_engine.weights_version()
+            except Exception:
+                wver = None
+        self.runtime.mark_cycle_ok(
+            decision_candle_ts=ts_key,
+            n_ranked=len(ranked),
+            weights_version=wver,
+            health_ok=health_ok,
+        )
+        self.runtime.update(last_successful_data_timestamp=ts_key)
 
         return ranked
 

@@ -1,0 +1,159 @@
+# BTCC Adaptive V2 — prediction score S + virtual LONG ALT/BTC simulation
+# SIGNAL / PAPER SIMULATION ONLY — no exchange orders, no leverage, no shorts.
+# Economic objective: BTC → ALT → BTC accumulation when ALT/BTC rises.
+
+sim:
+  enabled: true
+  version: "adaptive_v2"
+  bot_version: "2.0.0"
+
+  # Prediction / score
+  primary_horizon_hours: 4          # reuse existing 4h horizon — do not invent another
+  long_threshold: 0.60              # fixed; NOT adaptive in this version
+  candle_interval: 15m              # reuse existing closed-bar convention
+  # Entry fills at the OPEN of the next candle after the decision (closed) bar.
+  entry_fill: next_bar_open
+
+  # Same-candle TP+SL ambiguity (no lower-TF data available)
+  same_candle_conflict: assume_sl_first
+  same_candle_conflict_note: >
+    Conservative assumption: when both stop-loss and take-profit levels are
+    touched within the same 15m OHLC bar and order cannot be known, assume
+    stop-loss occurs first. For Strategy 3, if trailing is active (or activates
+    on the same bar via high >= activation), a stop hit is recorded as
+    TRAILING_STOP (or TRAILING_STOP_SAME_CANDLE_CONFLICT). Intra-bar order of
+    trail activation vs pullback to the trail stop cannot be known from OHLC alone;
+    we activate/ratchet from the bar high first, then evaluate the stop.
+
+  # Opportunity limits
+  max_open_opportunities: 10
+  one_opportunity_per_pair: true
+
+  # Virtual capital per opportunity (comparable across strategies)
+  notional_usd: 100.0
+  compound_notional: false
+
+  # Costs — applied identically to all three exit strategies
+  fee_rate_per_side: 0.0010         # 0.10%
+  slippage_rate_per_side: 0.0005    # 0.05%
+
+  strategies:
+    strategy_1:
+      name: "S1_fixed_1_1p5"
+      stop_loss_pct: 0.010          # -1.0%
+      take_profit_pct: 0.015        # +1.5%
+      trailing: null
+    strategy_2:
+      name: "S2_fixed_2_3"
+      stop_loss_pct: 0.020          # -2.0%
+      take_profit_pct: 0.030        # +3.0%
+      trailing: null
+    strategy_3:
+      name: "S3_trail_1_0p5"
+      stop_loss_pct: 0.010          # initial -1.0%
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.010       # +1.0%
+        distance_pct: 0.005         # 0.5%
+
+  # Daily adaptive weight update (America/Sao_Paulo wall clock)
+  weight_update:
+    timezone: "America/Sao_Paulo"
+    hour: 23
+    minute: 0
+    rolling_window_days: 90
+    time_decay_half_life_days: 45
+    min_observations_total: 200
+    min_observations_per_factor: 50
+    weight_min: 0.05
+    weight_max: 0.40
+    # Always recalculate (no Champion/Challenger promotion gate)
+    always_update: true
+    # Shrinkage toward previous known-good weights (stability, not promotion)
+    stability_blend: 0.25           # new = (1-b)*prev + b*raw_estimate
+
+  # BTC.D: prefer absolute Pro chart or local CSV; else RELATIVE top-N share
+  # with NO present-day /global calibration (look-ahead free).
+  btc_d:
+    mode: relative_top_n_no_present_day_scale
+    allow_present_day_calibration: false
+    exclude_if_unavailable: false
+
+  # BTC.D health gate for NEW opportunities (live + backtest).
+  # Age = decision_time − last observation ≤ t (sim time in backtest, wall clock live).
+  # Production definition: BTC.D older than BTC_D_MAX_AGE (7200s) is STALE and blocks
+  # NEW simulated trades. Relative top-N live feed is ~hourly; 7200s = 2h tolerance.
+  btc_d_health:
+    require_for_new_trades: true
+    max_age_seconds: 7200          # BTC_D_MAX_AGE — stale if observation age > 2h
+    min_valid_pct: 15.0
+    max_valid_pct: 95.0
+
+  # Historical vs live BTC.D resolution (both relative proxy, no present-day scale):
+  #   - 1-year backtest cache: daily relative proxy (~365 points)
+  #   - Live / short backtest caches: higher-frequency (~hourly) relative proxy
+  # Lookup rule (both): last observation with timestamp <= decision_ts; no interpolation.
+
+  # Market data freshness
+  data_health:
+    max_candle_age_seconds: 1200    # 20 minutes
+    min_relative_bars: 200
+
+  # Telegram ops alerts (ranking messages remain separate / unchanged)
+  alerts:
+    activity_window_minutes: 60
+    activity_open_threshold: 3
+    send_startup: true
+    send_shutdown: true
+    send_data_failure: true
+    send_btcd_failure: true
+    send_runtime_error: true
+    send_activity_burst: true
+    send_capacity_saturation: true
+    send_daily_summary: true
+
+  # Storage (append-only research; 90d window controls LEARNING only)
+  storage:
+    root: data/sim
+    predictions_path: data/sim/predictions.csv
+    opportunities_path: data/sim/opportunities.csv
+    strategy_legs_path: data/sim/strategy_legs.csv
+    weight_history_path: data/sim/weight_history.csv
+    learning_metrics_path: data/sim/learning_metrics.csv
+    state_path: data/sim/state.json
+    runtime_state_path: data/sim/runtime_state.json
+    daily_update_log_path: data/sim/daily_updates.jsonl
+
+  # Entry policies (orthogonal to exit strategies S1/S2/S3)
+  entry_policies:
+    enabled:
+      - NORMAL_FILTERED
+      - LATE_ENTRY_ALLOWED
+    late_entry_reject_threshold_source: signal_config.late_entry.alert_threshold
+    note: >
+      Separate opportunity books per policy (each max_open=10). Same S, data,
+      BTC.D, fees, exits. Only Late Entry rejection differs.
+
+  # Threshold sensitivity experiment (research only; live stays at 0.60)
+  threshold_sweep:
+    values: [0.30, 0.40, 0.50, 0.60, 0.70, 0.80]
+
+  # Walk-forward: 90-day initialization THEN daily rolling-90d adaptation
+  # (NOT 4×90-day folds)
+  walk_forward:
+    total_days: 365
+    init_days: 90
+    daily_rolling_window_days: 90
+    # New weights calculated at 23:00 become effective at the NEXT decision bar
+    weight_effective: next_bar_after_calculation
+
+  # Universe policy — MEXC exchangeInfo has no listing timestamps;
+  # point-in-time membership cannot be reconstructed from available APIs.
+  universe_policy:
+    mode: fixed_research_20
+    survivorship_bias: documented
+    note: >
+      Fixed 20-base research universe from signal_config.yaml for the entire
+      historical period. This introduces survivorship/selection bias. Kept as
+      an explicit research baseline; PIT top-20 is not available from MEXC
+      public exchangeInfo (no listing-time field).

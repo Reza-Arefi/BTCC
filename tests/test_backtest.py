@@ -199,7 +199,8 @@ def test_dominance_fetch_graceful_on_auth_failure(monkeypatch, tmp_path):
     dom = HistoricalDominanceSeries.fetch_coingecko(14, tmp_path, force=True)
     # Reconstruction from top coins should succeed under mock
     assert not dom.df.empty
-    assert dom.meta.get("source") == "coingecko_top_coins_reconstructed"
+    assert dom.meta.get("source") == "coingecko_top_coins_relative"
+    assert dom.meta.get("calibration") == "none_no_present_day_scaling"
     assert "btc_dominance_pct" in dom.df.columns
 
 

@@ -11,6 +11,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "configs" / "signal_config.yaml"
 DEFAULT_ADAPTIVE = ROOT / "configs" / "adaptive_config.yaml"
+DEFAULT_SIM = ROOT / "configs" / "sim_config.yaml"
 
 
 def load_adaptive_config(path: str | Path | None = None) -> dict[str, Any]:
@@ -43,6 +44,13 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
         cfg["adaptive"] = adaptive
     else:
         cfg.setdefault("adaptive", {"enabled": False})
+    # Adaptive V2 simulation config (optional)
+    if DEFAULT_SIM.exists():
+        from btcc.sim.config import load_sim_config
+
+        cfg["sim"] = load_sim_config(DEFAULT_SIM)
+    else:
+        cfg.setdefault("sim", {"enabled": False})
     return cfg
 
 

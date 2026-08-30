@@ -32,7 +32,7 @@ class MexcPublicREST:
             try:
                 r = self.session.get(f"{self.base_url}{path}", params=params, timeout=30)
                 if r.status_code == 429:
-                    time.sleep(1.5 * (attempt + 1))
+                    time.sleep(min(60.0, 1.5 * (2 ** attempt)))
                     continue
                 # Invalid symbol / bad request — do not retry forever
                 if r.status_code == 400:
@@ -43,8 +43,9 @@ class MexcPublicREST:
                 return r.json()
             except requests.RequestException as e:
                 last_err = e
-                logger.warning("REST retry %s: %s", attempt, e)
-                time.sleep(1.0 * (attempt + 1))
+                sleep_s = min(60.0, 1.0 * (2 ** attempt))
+                logger.warning("REST retry %s (sleep %.1fs): %s", attempt, sleep_s, e)
+                time.sleep(sleep_s)
         raise RuntimeError(f"REST failed: {path} ({last_err})")
 
     def fetch_klines(
@@ -87,8 +88,14 @@ class MexcPublicREST:
         path = candle_path(candle_dir, symbol, interval)
         if not force:
             cached = load_candles(path)
-            if cached is not None and len(cached) >= min(lookback_bars // 2, 200):
-                age_h = (datetime.now(timezone.utc) - cached["timestamp"].max().to_pydatetime()).total_seconds() / 3600
+            # Require near-full lookback — never silently accept a short cache
+            # (previous min(lookback//2, 200) short-circuited year-scale downloads).
+            min_ok = max(int(lookback_bars * 0.95), lookback_bars - 50)
+            if cached is not None and len(cached) >= min_ok:
+                tmax = cached["timestamp"].max()
+                if getattr(tmax, "tzinfo", None) is None:
+                    tmax = tmax.tz_localize("UTC")
+                age_h = (datetime.now(timezone.utc) - tmax.to_pydatetime()).total_seconds() / 3600
                 if age_h < 1.0:
                     return cached
 

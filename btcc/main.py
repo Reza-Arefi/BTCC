@@ -4,10 +4,13 @@ Usage:
   cd BTCC
   python -m btcc.main bootstrap              # load candles + universe audit
   python -m btcc.main adaptive-bootstrap     # Champion v1 + import 90d history
-  python -m btcc.main once                   # single 15m cycle
+  python -m btcc.main once                   # single 15m cycle (+ Adaptive V2 sim)
   python -m btcc.main run                    # loop every 15m
-  python -m btcc.main adaptive-checkpoint    # manual Challenger check (not auto-weight-update)
+  python -m btcc.main adaptive-checkpoint    # manual Challenger check (legacy V1)
   python -m btcc.main report                 # calibration / accuracy report
+  python -m btcc.main sim-daily-update       # force Adaptive V2 23:00 weight update
+  python -m btcc.main sim-backtest [--days N]
+  python -m btcc.main sim-threshold-sweep [--days N]
 """
 
 from __future__ import annotations
@@ -244,10 +247,15 @@ def main() -> int:
             "bootstrap",
             "adaptive-bootstrap",
             "adaptive-checkpoint",
+            "sim-daily-update",
+            "sim-backtest",
+            "sim-threshold-sweep",
+            "sim-abc",
         ],
     )
     parser.add_argument("--config", default=None)
-    parser.add_argument("--force", action="store_true", help="Force re-bootstrap Champion/history")
+    parser.add_argument("--force", action="store_true", help="Force re-bootstrap / force daily update")
+    parser.add_argument("--days", type=int, default=None, help="Backtest / sweep window days")
     args = parser.parse_args()
 
     env_path = ROOT / ".env"
@@ -288,7 +296,54 @@ def main() -> int:
     if args.command == "adaptive-checkpoint":
         return cmd_adaptive_checkpoint(cfg)
 
+    if args.command == "sim-daily-update":
+        from btcc.sim.config import load_sim_config
+        from btcc.sim.daily_update import run_daily_weight_update
+        from btcc.sim.store import SimStore
+
+        sim = cfg.get("sim") or load_sim_config()
+        sim["_fallback_factor_weights"] = dict(cfg["factors"]["weights"])
+        store = SimStore(sim)
+        result = run_daily_weight_update(sim, store, force=True)
+        print(result)
+        return 0 if result.get("status") in ("OK", "SKIPPED", "FAILED") else 1
+
+    if args.command == "sim-backtest":
+        from btcc.sim.backtest import run_adaptive_sim_backtest
+
+        days = int(args.days or 365)
+        out = run_adaptive_sim_backtest(cfg, days=days, force_download=args.force)
+        print(f"Adaptive V2 backtest output: {out}")
+        return 0
+
+    if args.command == "sim-threshold-sweep":
+        from btcc.sim.backtest import run_threshold_sweep
+
+        days = int(args.days or 90)
+        out = run_threshold_sweep(days=days, force_download=args.force)
+        print(f"Threshold sweep output: {out}")
+        return 0
+
+    if args.command == "sim-abc":
+        from btcc.sim.abc_compare import run_abc_comparison
+
+        days = int(args.days or 14)
+        # Smoke / short runs: shrink init window so adaptive can update
+        init_days = 3 if days < 90 else None
+        roll_days = min(7, days) if days < 90 else None
+        out = run_abc_comparison(
+            days=days,
+            force_download=args.force,
+            long_threshold=0.60,
+            init_days=init_days,
+            roll_days=roll_days,
+        )
+        print(f"ABC comparison output: {out}")
+        return 0
+
     engine = SignalEngine(cfg)
+    if engine.sim_engine is not None and args.command in {"once", "run"}:
+        engine.sim_engine.notify_startup()
 
     if args.command in {"bootstrap", "once", "run"}:
         engine.bootstrap()
@@ -328,7 +383,22 @@ def main() -> int:
         return 0
 
     if args.command == "run":
-        logger.info("Entering 15m loop (Ctrl+C to stop). SIGNAL ONLY.")
+        import os
+
+        under_systemd = bool(os.environ.get("BTCC_SERVICE") or os.environ.get("INVOCATION_ID"))
+        logger.info(
+            "Entering 15m loop (SIGNAL ONLY + Adaptive V2 paper sim). "
+            "service=%s last_candle=%s",
+            under_systemd,
+            engine.runtime.last_decision_candle_ts(),
+        )
+        if under_systemd:
+            logger.info(
+                "Running under systemd — survives SSH disconnect / local PC power-off. "
+                "Commands: systemctl status|start|stop|restart btcc ; journalctl -u btcc -f"
+            )
+        base_backoff = 30.0
+        max_backoff = 600.0
         while True:
             try:
                 wait = seconds_to_next_15m()
@@ -347,10 +417,25 @@ def main() -> int:
                     )
             except KeyboardInterrupt:
                 logger.info("Stopped by user.")
+                if engine.sim_engine is not None:
+                    engine.sim_engine.notify_shutdown("user_stop")
                 return 0
             except Exception as e:
                 logger.exception("Cycle error: %s", e)
-                time.sleep(30)
+                n = engine.runtime.mark_cycle_failure(str(e))
+                if engine.sim_engine is not None:
+                    try:
+                        engine.sim_engine.alerter.runtime_error(str(e))
+                    except Exception:
+                        pass
+                # Exponential backoff — do not corrupt state; retry next attempt
+                sleep_s = min(max_backoff, base_backoff * (2 ** min(max(n - 1, 0), 4)))
+                logger.warning(
+                    "Backoff %.0fs after failure #%d (network/API outage safe)",
+                    sleep_s,
+                    n,
+                )
+                time.sleep(sleep_s)
     return 0
 
 

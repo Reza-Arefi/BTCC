@@ -1,11 +1,14 @@
 """Historical BTC dominance — no look-ahead.
 
-Preferred source: CoinGecko free market_chart endpoints.
-  BTC.D ≈ BTC_market_cap / sum(top_N_coin_market_caps)
-  then level-calibrated to current /global market_cap_percentage.btc
+Relative proxy (default free-tier path), identical to live:
+  BTC.D_relative = 100 * BTC_market_cap / sum(available top-N market_caps)
+
+NO present-day /global level calibration.
 
 Resolution for days≤90 is hourly — sufficient for a slow-moving macro factor
 on 15m decisions (last-known observation only; never interpolated).
+
+At decision time t only values with timestamp <= t are visible.
 
 global/market_cap_chart is Pro-only; we do NOT scrape TradingView.
 """
@@ -22,33 +25,12 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from btcc.data.relative_btc_d import TOP_COIN_IDS, compute_relative_btc_d_pct
+
 logger = logging.getLogger(__name__)
 
-# Major coins covering most of crypto market cap (legitimate CoinGecko IDs).
-# Order: BTC first, then large caps. Used only when Pro global chart is unavailable.
-_TOP_COIN_IDS = (
-    "bitcoin",
-    "ethereum",
-    "tether",
-    "ripple",
-    "binancecoin",
-    "solana",
-    "usd-coin",
-    "dogecoin",
-    "cardano",
-    "tron",
-    "chainlink",
-    "avalanche-2",
-    "bitcoin-cash",
-    "litecoin",
-    "polkadot",
-    "uniswap",
-    "stellar",
-    "hyperliquid",
-    "sui",
-    "toncoin",  # may 404 — skipped if missing; id varies on CoinGecko
-    "the-open-network",
-)
+# Back-compat alias — single source of truth is relative_btc_d.TOP_COIN_IDS
+_TOP_COIN_IDS = TOP_COIN_IDS
 
 
 class HistoricalDominanceSeries:
@@ -203,45 +185,48 @@ class HistoricalDominanceSeries:
             )
 
         coin_cols = [c for c in merged.columns if c != "timestamp"]
-        merged["total_cap"] = merged[coin_cols].sum(axis=1, min_count=1)
-        merged = merged.dropna(subset=["bitcoin", "total_cap"])
-        merged = merged[merged["total_cap"] > 0]
-        merged["btc_dominance_raw"] = merged["bitcoin"] / merged["total_cap"] * 100.0
+        rows_out = []
+        for _, row in merged.iterrows():
+            caps = {c: row[c] for c in coin_cols if pd.notna(row[c]) and float(row[c]) > 0}
+            pct, meta = compute_relative_btc_d_pct(caps)
+            if pct is None:
+                continue
+            # Soft sanity on relative share (not absolute global BTC.D)
+            if not (15.0 < pct < 95.0):
+                continue
+            rows_out.append({"timestamp": row["timestamp"], "btc_dominance_pct": pct})
 
-        # Level-calibrate to current CoinGecko /global so reconstructed levels
-        # match true BTC.D at fetch time (coverage gap of top-N is approximately constant).
-        true_now = cls._current_true_dominance(session)
-        scale = 1.0
-        calibration = "none"
-        if true_now is not None and true_now > 0:
-            approx_now = float(merged["btc_dominance_raw"].iloc[-1])
-            if approx_now > 0:
-                scale = true_now / approx_now
-                calibration = f"scaled_to_global_btc_d={true_now:.4f}_from_approx={approx_now:.4f}_factor={scale:.6f}"
-                logger.info(
-                    "BTC.D level calibration: approx=%.2f%% → true=%.2f%% (×%.4f)",
-                    approx_now, true_now, scale,
-                )
-
-        merged["btc_dominance_pct"] = merged["btc_dominance_raw"] * scale
-        # Soft sanity band after calibration
-        out = merged[["timestamp", "btc_dominance_pct"]].copy()
-        out = out[(out["btc_dominance_pct"] > 25) & (out["btc_dominance_pct"] < 90)]
+        out = pd.DataFrame(rows_out)
+        if out.empty:
+            return out, {
+                "source": "coingecko_top_coins_relative",
+                "representation": "relative_btc_share_of_top_n",
+                "status": "merge_empty",
+                "days": days,
+                "n_points": 0,
+                "n_coins_used": len(frames),
+                "coins_used": list(frames.keys()),
+                "calibration": "none_no_present_day_scaling",
+            }
         out = out.drop_duplicates("timestamp").sort_values("timestamp").reset_index(drop=True)
 
         meta = {
-            "source": "coingecko_top_coins_reconstructed",
-            "status": "OK" if not out.empty else "merge_empty",
+            "source": "coingecko_top_coins_relative",
+            "representation": "relative_btc_share_of_top_n",
+            "status": "OK",
             "days": days,
             "n_points": len(out),
             "n_coins_used": len(frames),
             "coins_used": list(frames.keys()),
-            "resolution": "hourly_for_days_le_90",
-            "calibration": calibration,
+            "resolution": "hourly_if_days_le_90_else_daily",
+            "calibration": "none_no_present_day_scaling",
             "note": (
-                "BTC.D reconstructed as BTC_mcap/sum(top_N_mcaps) from CoinGecko "
-                "market_chart (free). Level-calibrated to /global BTC dominance at "
-                "fetch time. No interpolation. No TradingView scrape."
+                "RELATIVE BTC.D = BTC_mcap / sum(top_N_mcaps) from CoinGecko free "
+                "market_chart. NOT absolute global BTC dominance. Present-day "
+                "/global level calibration is intentionally DISABLED to avoid "
+                "look-ahead contamination. Prefer Pro global/market_cap_chart or "
+                "local_csv for absolute BTC.D. Live DominanceFeed uses the same "
+                "formula + TOP_COIN_IDS via /coins/markets."
             ),
             "fetched_utc": datetime.now(timezone.utc).isoformat(),
         }

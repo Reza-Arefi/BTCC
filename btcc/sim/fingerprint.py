@@ -154,7 +154,9 @@ def write_run_fingerprint(
             "max_age_seconds": bd_health.get("max_age_seconds"),
             "BTC_D_MAX_AGE": bd_health.get("max_age_seconds"),
             "stale_definition": (
-                f"observation_age > {bd_health.get('max_age_seconds')}s blocks NEW trades"
+                f"observation_age > {bd_health.get('max_age_seconds')}s marks STALE "
+                f"(require_for_new_trades={bd_health.get('require_for_new_trades')}; "
+                f"{'BLOCKS' if bd_health.get('require_for_new_trades') else 'does NOT block'} new trades)"
             ),
             "historical_note": (
                 "1-year historical BTC.D = daily relative proxy; "

@@ -37,6 +37,17 @@ def compute_all_factors(
     struct = structure_factor(alt_btc)
 
     w = dict(factor_weights) if factor_weights is not None else dict(cfg["factors"]["weights"])
+    # Isolation: BTC.D-linked btc_regime group is contextual only (w=0), then renormalize.
+    w["btc_regime"] = 0.0
+    active = ("momentum", "trend", "volume", "volatility", "rsi", "structure")
+    s = sum(max(0.0, float(w.get(k, 0.0))) for k in active)
+    if s <= 0:
+        w = {k: (1.0 / len(active) if k in active else 0.0) for k in w}
+        w["btc_regime"] = 0.0
+    else:
+        for k in active:
+            w[k] = max(0.0, float(w.get(k, 0.0))) / s
+        w["btc_regime"] = 0.0
     signal_score = (
         w["momentum"] * mom["score"]
         + w["trend"] * trend["score"]

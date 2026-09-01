@@ -1,0 +1,24 @@
+{
+  "experiment_id": "abc_compare_365d_thr0p60_20260830_185128",
+  "experiment_kind": "ABC_WALK_FORWARD_S1_S5_BTCD_CONTEXTUAL",
+  "status": "FROZEN",
+  "frozen_at_utc": "2026-09-01T00:35:00+00:00",
+  "stopped_reason": "User-requested safe stop for new trailing-exit experiment; adaptive arm interrupted at day 205 checkpoint",
+  "git_sha_at_launch": "421843391a724a42bddced1df5c69ac8b8af36f1",
+  "start_time_utc": "2026-08-30T18:51:28+00:00",
+  "output_directory": "results/abc_compare_365d_thr0p60_20260830_185128",
+  "stopped_at_checkpoint": {
+    "static": {"day": 366, "final_checkpoint": true},
+    "equal": {"day": 366, "final_checkpoint": true},
+    "adaptive": {"day": 205, "final_checkpoint": false}
+  },
+  "configuration_snapshot": {
+    "long_threshold": 0.60,
+    "starting_capital_usd": 1000.0,
+    "entry_policies": ["NORMAL_FILTERED", "LATE_ENTRY_ALLOWED"],
+    "model_arms": ["static", "equal", "adaptive"],
+    "exit_strategies": ["strategy_1", "strategy_2", "strategy_3", "strategy_4", "strategy_5"],
+    "btc_d_health_require_for_new_trades": false
+  },
+  "on_disk_manifest": "results/abc_compare_365d_thr0p60_20260830_185128/EXPERIMENT_FROZEN.json"
+}

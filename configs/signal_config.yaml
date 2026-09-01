@@ -87,9 +87,11 @@ data:
 
 factors:
   weights:
+    # Trading score uses ACTIVE_SIGNAL_KEYS only. btc_regime is contextual
+    # (still computed/logged) with effective weight forced to 0 in scoring code.
     momentum: 0.20
     trend: 0.20
-    btc_regime: 0.20
+    btc_regime: 0.0
     volume: 0.12
     volatility: 0.10
     rsi: 0.08

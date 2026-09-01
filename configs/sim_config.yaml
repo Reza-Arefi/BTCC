@@ -37,7 +37,7 @@ sim:
   # Opportunity sizing remains notional_usd; this tracks compounded P/L from $1,000.
   starting_capital_usd: 1000.0
 
-  # Costs — applied identically to all three exit strategies
+  # Costs — applied identically to all exit strategies
   fee_rate_per_side: 0.0010         # 0.10%
   slippage_rate_per_side: 0.0005    # 0.05%
 
@@ -55,10 +55,22 @@ sim:
     strategy_3:
       name: "S3_trail_1_0p5"
       stop_loss_pct: 0.010          # initial -1.0%
-      take_profit_pct: null
+      take_profit_pct: null         # trailing only — no fixed TP
       trailing:
         activation_pct: 0.010       # +1.0%
         distance_pct: 0.005         # 0.5%
+    strategy_4:
+      name: "S4_fixed_3_5"
+      stop_loss_pct: 0.030          # -3.0%
+      take_profit_pct: 0.050        # +5.0%
+      trailing: null
+    strategy_5:
+      name: "S5_trail_3_1"
+      stop_loss_pct: 0.030          # initial -3.0%
+      take_profit_pct: null         # trailing only — no fixed TP
+      trailing:
+        activation_pct: 0.030       # +3.0%
+        distance_pct: 0.010         # 1.0%
 
   # Daily adaptive weight update (America/Sao_Paulo wall clock)
   weight_update:
@@ -83,13 +95,12 @@ sim:
     allow_present_day_calibration: false
     exclude_if_unavailable: false
 
-  # BTC.D health gate for NEW opportunities (live + backtest).
-  # Age = decision_time − last observation ≤ t (sim time in backtest, wall clock live).
-  # Production definition: BTC.D older than BTC_D_MAX_AGE (7200s) is STALE and blocks
-  # NEW simulated trades. Relative top-N live feed is ~hourly; 7200s = 2h tolerance.
+  # BTC.D health — CONTEXTUAL / DIAGNOSTIC (isolation experiment).
+  # Age threshold still logged; stale/unavailable must NOT reject trades when
+  # require_for_new_trades is false.
   btc_d_health:
-    require_for_new_trades: true
-    max_age_seconds: 7200          # BTC_D_MAX_AGE — stale if observation age > 2h
+    require_for_new_trades: false   # BTC.D does not gate eligibility
+    max_age_seconds: 7200          # BTC_D_MAX_AGE — status=STALE if obs age > 2h (logged)
     min_valid_pct: 15.0
     max_valid_pct: 95.0
 
@@ -128,7 +139,7 @@ sim:
     runtime_state_path: data/sim/runtime_state.json
     daily_update_log_path: data/sim/daily_updates.jsonl
 
-  # Entry policies (orthogonal to exit strategies S1/S2/S3)
+  # Entry policies (orthogonal to exit strategies S1–S5)
   entry_policies:
     enabled:
       - NORMAL_FILTERED

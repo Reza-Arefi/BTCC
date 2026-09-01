@@ -26,7 +26,7 @@ ARM_ADAPTIVE = "adaptive"
 ARM_ORDER = (ARM_STATIC, ARM_EQUAL, ARM_ADAPTIVE)
 ARM_LABELS = {
     ARM_STATIC: "Static (config factors.weights)",
-    ARM_EQUAL: "Equal (1/N)",
+    ARM_EQUAL: "Equal (1/N over ACTIVE_SIGNAL_KEYS; btc_regime=0)",
     ARM_ADAPTIVE: "Adaptive (90d init + daily rolling 90d)",
 }
 

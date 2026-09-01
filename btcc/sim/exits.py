@@ -1,4 +1,4 @@
-"""Three parallel virtual exit strategies for one LONG ALT/BTC opportunity.
+"""Parallel virtual exit strategies for one LONG ALT/BTC opportunity.
 
 Strategies share entry timestamp/price/notional/signal; differ only in exits.
 

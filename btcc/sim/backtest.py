@@ -42,6 +42,8 @@ from btcc.sim.exits import (
 from btcc.sim.fingerprint import write_run_fingerprint
 from btcc.sim.maturity import filter_matured_for_learning
 from btcc.sim.score import (
+    ACTIVE_SIGNAL_KEYS,
+    CONTEXT_FACTOR_KEYS,
     FACTOR_KEYS,
     combined_score,
     equal_factor_weights,
@@ -90,7 +92,7 @@ def run_adaptive_sim_backtest(
 
     weight_mode:
       - ``static``: fixed signal_config factors.weights (never updated)
-      - ``equal``: fixed 1/N over FACTOR_KEYS (never updated)
+      - ``equal``: fixed 1/N over ACTIVE_SIGNAL_KEYS (btc_regime=0; never updated)
       - ``adaptive``: 90d init + daily rolling 90d
     """
     if weight_mode not in ("static", "equal", "adaptive"):
@@ -178,7 +180,7 @@ def run_adaptive_sim_backtest(
             },
             "source": (
                 "signal_config.factors.weights" if weight_mode == "static"
-                else ("1/N FACTOR_KEYS" if weight_mode == "equal" else "adaptive_schedule")
+                else ("1/N ACTIVE_SIGNAL_KEYS (btc_regime=0)" if weight_mode == "equal" else "adaptive_schedule")
             ),
         }, indent=2),
         encoding="utf-8",
@@ -268,7 +270,7 @@ def run_adaptive_sim_backtest(
             eval_start=str(eval_start),
             eval_end=str(eval_end),
             coverage=panels.get("coverage"),
-            refresh_analytics=True,
+            refresh_analytics=bool(sim.get("daily_checkpoint_refresh_analytics", True)),
             telegram_enabled=False,
             starting_capital_usd=float(sim.get("starting_capital_usd", 1000.0)),
         )
@@ -640,11 +642,14 @@ def run_adaptive_sim_backtest(
             if len(vals) > 1:
                 raise RuntimeError(f"STATIC weights changed for {k}: {vals}")
     if weight_mode == "equal" and pred_rows:
-        expected = 1.0 / len(FACTOR_KEYS)
+        expected = 1.0 / len(ACTIVE_SIGNAL_KEYS)
         for r in pred_rows:
-            for k in FACTOR_KEYS:
-                if abs(float(r[f"weight_{k}"]) - expected) > 1e-9:
+            for k in ACTIVE_SIGNAL_KEYS:
+                if abs(float(r[f"weight_{k}"]) - expected) > 1e-6:
                     raise RuntimeError(f"EQUAL weight drift {k}={r[f'weight_{k}']}")
+            for k in CONTEXT_FACTOR_KEYS:
+                if abs(float(r.get(f"weight_{k}", 0.0) or 0.0)) > 1e-6:
+                    raise RuntimeError(f"EQUAL context weight not zero {k}={r.get(f'weight_{k}')}")
 
     pred_df = pd.DataFrame(pred_rows)
     opp_df = pd.DataFrame(opp_rows)

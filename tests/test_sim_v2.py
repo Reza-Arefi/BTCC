@@ -105,6 +105,78 @@ def test_same_candle_sl_first():
     assert leg.exit_reason == "STOP_LOSS_SAME_CANDLE_CONFLICT"
 
 
+def test_five_strategies_from_config_share_entry():
+    from btcc.sim.config import load_sim_config
+    from btcc.sim.exits import specs_from_config
+
+    sim = load_sim_config()
+    specs = specs_from_config(sim)
+    by_key = {s.key: s for s in specs}
+    assert set(by_key) == {
+        "strategy_1", "strategy_2", "strategy_3", "strategy_4", "strategy_5",
+    }
+    # S1–S3 unchanged
+    assert by_key["strategy_1"].stop_loss_pct == 0.01
+    assert by_key["strategy_1"].take_profit_pct == 0.015
+    assert by_key["strategy_1"].trail_activation_pct is None
+    assert by_key["strategy_2"].stop_loss_pct == 0.02
+    assert by_key["strategy_2"].take_profit_pct == 0.03
+    assert by_key["strategy_3"].take_profit_pct is None
+    assert by_key["strategy_3"].trail_activation_pct == 0.01
+    assert by_key["strategy_3"].trail_distance_pct == 0.005
+    # S4 fixed wide
+    assert by_key["strategy_4"].stop_loss_pct == 0.03
+    assert by_key["strategy_4"].take_profit_pct == 0.05
+    assert by_key["strategy_4"].trail_activation_pct is None
+    # S5 trail-only wide (no TP)
+    assert by_key["strategy_5"].stop_loss_pct == 0.03
+    assert by_key["strategy_5"].take_profit_pct is None
+    assert by_key["strategy_5"].trail_activation_pct == 0.03
+    assert by_key["strategy_5"].trail_distance_pct == 0.01
+
+    costs = CostModel(0.001, 0.0005)
+    legs = open_opportunity_legs(
+        alt_btc_entry_mid=100.0,
+        btc_usdt=50000,
+        notional_usd=100,
+        costs=costs,
+        specs=specs,
+        entry_ts=datetime.now(timezone.utc),
+    )
+    assert len(legs) == 5
+    fills = {leg.position["entry_fill_price"] for leg in legs}
+    btcs = {leg.position["entry_btc_spent"] for leg in legs}
+    assert len(fills) == 1
+    assert len(btcs) == 1
+    assert all(leg.tp is None for leg in legs if leg.spec.key in ("strategy_3", "strategy_5"))
+
+
+def test_s5_trailing_activates_at_plus_3_pct():
+    costs = CostModel(0.0, 0.0)
+    specs = [StrategySpec(
+        "strategy_5", "S5", stop_loss_pct=0.03,
+        trail_activation_pct=0.03, trail_distance_pct=0.01,
+    )]
+    legs = open_opportunity_legs(
+        alt_btc_entry_mid=100.0, btc_usdt=50000, notional_usd=100,
+        costs=costs, specs=specs, entry_ts="t0",
+    )
+    leg = legs[0]
+    fill = leg.position["entry_fill_price"]
+    assert leg.tp is None
+    # Below activation — still initial SL
+    process_bar_on_leg(leg, bar={
+        "timestamp": "t1", "open": fill, "high": fill * 1.02, "low": fill * 0.99, "close": fill * 1.01,
+    }, btc_usdt=50000, costs=costs)
+    assert not leg.trailing_active
+    # Reach +3% high → activate; trail = high * 0.99
+    process_bar_on_leg(leg, bar={
+        "timestamp": "t2", "open": fill * 1.02, "high": fill * 1.04, "low": fill * 1.02, "close": fill * 1.035,
+    }, btc_usdt=50000, costs=costs)
+    assert leg.trailing_active
+    assert leg.trailing_stop == pytest.approx(fill * 1.04 * 0.99)
+
+
 def test_trailing_stop_ratchet():
     costs = CostModel(0.0, 0.0)
     specs = [StrategySpec(

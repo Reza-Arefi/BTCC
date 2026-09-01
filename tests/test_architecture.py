@@ -183,6 +183,73 @@ def test_btc_d_max_age_is_7200():
     assert int((sim.get("btc_d_health") or {}).get("max_age_seconds")) == 7200
 
 
+def test_btc_d_does_not_require_for_new_trades():
+    from btcc.sim.config import load_sim_config
+    from btcc.sim.health import evaluate_health
+    from datetime import datetime, timezone, timedelta
+
+    sim = load_sim_config()
+    assert (sim.get("btc_d_health") or {}).get("require_for_new_trades") is False
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    # Stale BTC.D (age >> 7200) must NOT block trades
+    h = evaluate_health(
+        sim_cfg=sim,
+        dominance_pct=55.0,
+        dominance_ts=now - timedelta(hours=6),
+        dominance_source="test",
+        decision_candle_ts=now,
+        now=now,
+        n_relative_bars=500,
+        indicator_ok=True,
+    )
+    assert h.btc_d_status == "STALE"
+    assert h.btc_d_available is False
+    assert h.allow_new_trades is True
+    assert any("DIAG_BTC_D_STALE" in r or "BTC_D_STALE" in r for r in h.reasons)
+
+
+def test_btc_regime_weight_zero_in_score():
+    from btcc.sim.score import (
+        ACTIVE_SIGNAL_KEYS,
+        combined_score,
+        equal_factor_weights,
+        static_factor_weights,
+    )
+    from btcc.config import load_config
+
+    cfg = load_config()
+    sw = static_factor_weights(cfg)
+    ew = equal_factor_weights()
+    assert sw["btc_regime"] == 0.0
+    assert ew["btc_regime"] == 0.0
+    assert abs(sum(sw[k] for k in ACTIVE_SIGNAL_KEYS) - 1.0) < 1e-9
+    factors = {k: 0.8 for k in ACTIVE_SIGNAL_KEYS}
+    factors["btc_regime"] = 1.0  # would pull S up if weighted
+    s0 = combined_score(factors, sw)["S"]
+    factors["btc_regime"] = 0.0
+    s1 = combined_score(factors, sw)["S"]
+    assert abs(s0 - s1) < 1e-12
+
+
+def test_capital_uses_pnl_usd_equiv():
+    import pandas as pd
+    from btcc.analytics.capital import capital_daily_series
+
+    legs = pd.DataFrame([
+        {
+            "entry_policy": "NORMAL_FILTERED",
+            "strategy_key": "strategy_1",
+            "closed": True,
+            "pnl_btc": 0.001,
+            "pnl_usd_equiv": 12.5,
+            "exit_ts": "2026-01-02",
+            "day_number": 1,
+        },
+    ])
+    d = capital_daily_series(legs, starting_capital_usd=1000.0, max_day=1)
+    assert abs(float(d.iloc[0]["ending_value"]) - 1012.5) < 1e-6
+
+
 def test_verify_btc_d_parity_uses_config_max_age():
     """Parity report must not hardcode 1800; uses sim_config 7200."""
     import scripts.verify_btc_d_parity as mod

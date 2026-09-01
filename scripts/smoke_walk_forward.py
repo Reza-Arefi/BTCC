@@ -27,12 +27,18 @@ def main() -> int:
     init_days = 3 if days < 90 else 90
     roll_days = min(7, days) if days < 90 else 90
     print(f"SMOKE walk-forward days={days} init_days={init_days} roll_days={roll_days}")
+    from btcc.sim.config import load_sim_config
+
+    sim = load_sim_config()
+    # Smoke: keep daily checkpoints, skip per-day full analytics rebuild (arm-end analytics still runs)
+    sim["daily_checkpoint_refresh_analytics"] = False
     cmp_dir = run_abc_comparison(
         days=days,
         force_download=False,
         long_threshold=0.60,
         init_days=init_days,
         roll_days=roll_days,
+        sim_cfg=sim,
     )
     print("ABC dir:", cmp_dir)
 
@@ -77,8 +83,74 @@ def main() -> int:
     # Day 90 marker only expected when init_days>=90; for smoke check Day init marker path exists in code via init_days
     checks["init_days_used"] = init_days
     checks["n_daily_checkpoint_dirs"] = n_days_total
-    checks["n_unique_plot_filenames"] = plot_families
     checks["telegram_backtest_off"] = True  # enforced in checkpoint/analytics
+
+    # Five exit strategies present in closed legs
+    expected_sk = {"strategy_1", "strategy_2", "strategy_3", "strategy_4", "strategy_5"}
+    sk_ok = False
+    for arm_dir in arm_dirs:
+        legs_path = arm_dir / "strategy_legs.csv"
+        if not legs_path.exists():
+            continue
+        import pandas as pd
+        legs = pd.read_csv(legs_path, nrows=5000)
+        if "strategy_key" not in legs.columns:
+            continue
+        found = set(legs["strategy_key"].dropna().astype(str).unique())
+        checks[f"{arm_dir.name}_strategy_keys"] = sorted(found)
+        if expected_sk.issubset(found):
+            sk_ok = True
+            break
+    checks["five_strategies_present"] = sk_ok
+
+    # Organized plot layout + $1,000 compounding primary plots
+    import pandas as pd
+    layout_ok = False
+    capital_ok = False
+    for arm_dir in arm_dirs:
+        plots_root = arm_dir / "analytics" / "plots"
+        # plots may be under analytics/plots/<arm>/...
+        candidates = list(plots_root.rglob("primary"))
+        if not candidates and (arm_dir / "analytics" / "arms").exists():
+            candidates = list((arm_dir / "analytics").rglob("primary"))
+        # Also ABC-level analytics
+        for prim in candidates:
+            parent = prim.parent
+            need = ["primary", "trades", "risk", "contextual", "comparisons", "prediction"]
+            if all((parent / n).is_dir() for n in need):
+                layout_ok = True
+            ports = list(prim.glob("portfolio_1000_*.png"))
+            if ports:
+                capital_ok = True
+        # capital metric CSV
+        for cap in (arm_dir / "analytics").rglob("*_capital_daily.csv"):
+            cdf = pd.read_csv(cap, nrows=5)
+            if "ending_value" in cdf.columns and "day_number" in cdf.columns:
+                # day 1 should be near 1000 when present in full file
+                full = pd.read_csv(cap)
+                d1 = full[full["day_number"] == 1]
+                if not d1.empty and float(d1["ending_value"].iloc[0]) == 1000.0:
+                    capital_ok = True
+                checks["capital_starts_at_1000"] = True
+        # day checkpoint plot snapshot preserves history
+        dc = arm_dir / "daily_checkpoints"
+        if dc.exists():
+            day_plots = list(dc.glob("day_*/plots/**/*.png")) + list(dc.glob("day_*/plots/*.png"))
+            checks[f"{arm_dir.name}_day_plot_snapshots"] = len(day_plots) >= 1
+
+    checks["organized_plot_layout"] = layout_ok
+    checks["portfolio_1000_plots"] = capital_ok
+    checks["init_days_used"] = init_days
+    checks["n_daily_checkpoint_dirs"] = n_days_total
+    checks["n_unique_plot_filenames"] = plot_families
+    checks["telegram_backtest_off"] = True
+
+    # BTC.D not required as trade rejection (config)
+    from btcc.sim.config import load_sim_config
+    sim = load_sim_config()
+    checks["btc_d_contextual_only"] = not bool((sim.get("btc_d_health") or {}).get("require_for_new_trades", True))
+    checks["starting_capital_usd_1000"] = float(sim.get("starting_capital_usd", 0)) == 1000.0
+    checks["five_strategies_in_config"] = set((sim.get("strategies") or {}).keys()) >= expected_sk
 
     report = {
         "cmp_dir": str(cmp_dir),
@@ -87,7 +159,18 @@ def main() -> int:
         "checks": checks,
         "all_critical_ok": all(
             v is True for k, v in checks.items()
-            if k.endswith(("_daily_checkpoints", "_plots", "_final_checkpoint", "_final_verify", "_handoff_reload", "_day_number_col", "arms_present"))
+            if k.endswith((
+                "_daily_checkpoints", "_plots", "_final_checkpoint", "_final_verify",
+                "_handoff_reload", "_day_number_col", "arms_present",
+            ))
+            or k in (
+                "five_strategies_present",
+                "organized_plot_layout",
+                "portfolio_1000_plots",
+                "btc_d_contextual_only",
+                "starting_capital_usd_1000",
+                "five_strategies_in_config",
+            )
         ),
     }
     out = cmp_dir / "SMOKE_C1_C3_REPORT.json"

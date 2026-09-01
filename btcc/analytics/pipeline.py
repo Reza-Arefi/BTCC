@@ -15,10 +15,13 @@ from btcc.analytics import metrics as M
 from btcc.analytics import plots as P
 from btcc.analytics.capital import capital_daily_series
 from btcc.analytics.daily import write_daily_snapshot
+from btcc.analytics.emit import emit_abc_comparison_plots, emit_arm_plots, ensure_plot_layout
+
 
 logger = logging.getLogger(__name__)
 
 ARM_ORDER = ("static", "equal", "adaptive")
+STRATEGY_KEYS = M.STRATEGY_KEYS
 
 
 def _ensure_layout(root: Path) -> dict[str, Path]:
@@ -109,6 +112,9 @@ def build_arm_analytics(
         "monthly_performance": monthly,
         "btcd_regime": btcd,
         "learning_progress": learn,
+        "expectancy": M.expectancy_summary(legs),
+        "expectancy_by_day": M.expectancy_by_day(legs),
+        "opportunity_funnel": M.opportunity_funnel(pred, opp, legs=legs),
     }
     for name, df in metric_files.items():
         if df is not None and not df.empty:
@@ -124,51 +130,44 @@ def build_arm_analytics(
             "n_predictions": len(pred),
             "n_opportunities": len(opp),
             "n_legs": len(legs),
+            "starting_capital_usd": starting_capital_usd,
             "generated_utc": datetime.now(timezone.utc).isoformat(),
         }, indent=2),
         encoding="utf-8",
     )
 
-    # Plots (arm-local) — Day-number x-axis; mark init→daily transition when known
-    plot_dir = dirs["plots"] / arm
-    plot_dir.mkdir(parents=True, exist_ok=True)
-    P.plot_btc_accumulation_by_strategy({arm: cum}, plot_dir, init_days=init_days)
-    P.plot_rolling_win_rate({arm: wr}, plot_dir, init_days=init_days)
-    if arm == "adaptive":
-        P.plot_adaptive_weights(wh_ts, plot_dir, init_days=init_days)
-        P.plot_weight_vs_usefulness(wvu, plot_dir)
-        P.plot_learning_progress(learn, plot_dir)
-    P.plot_indicator_correlations(corr_roll if not corr_roll.empty else corr_full, plot_dir)
-    P.plot_score_vs_return(svr, plot_dir)
-    P.plot_accuracy_buckets(buckets, plot_dir)
-    P.plot_drawdown({arm: dd}, plot_dir, init_days=init_days)
-    P.plot_simultaneous(sim, plot_dir, max_open=max_open, init_days=init_days)
-    P.plot_rejections(rej, plot_dir)
-    P.plot_monthly(monthly, plot_dir, arm)
-    P.plot_btcd_regimes(btcd, plot_dir)
-    P.plot_win_loss_bars({arm: wl}, plot_dir)
-    P.plot_entry_policy_btc(legs, plot_dir)
-    P.plot_entry_policy_win_rate(legs, plot_dir)
-    P.plot_recovered_trades(legs, plot_dir)
-    P.plot_entry_classification_scores(pred, plot_dir)
-    P.plot_entry_future_returns(pred, plot_dir)
-
-    # $1,000 compounded capital curves (per entry policy × strategy within this arm)
+    # Organized plots (Day-number x-axis; Day 90 marker; $1,000 compounding)
+    # Filenames already encode arm/policy — do not nest an extra arm folder.
+    plot_dir = dirs["plots"]
+    emit_summary = emit_arm_plots(
+        arm=arm,
+        plots_root=plot_dir,
+        pred=pred,
+        opp=opp,
+        legs=legs,
+        wh_ts=wh_ts,
+        cum=cum,
+        wr=wr,
+        corr=corr_roll if not corr_roll.empty else corr_full,
+        buckets=buckets,
+        svr=svr,
+        wl=wl,
+        dd=dd,
+        sim=sim,
+        rej=rej,
+        btcd=btcd,
+        learn=learn,
+        wvu=wvu,
+        init_days=init_days,
+        max_open=max_open,
+        starting_capital_usd=starting_capital_usd,
+    )
+    (dirs["data_summary"] / f"{arm}_plot_emit.json").write_text(
+        json.dumps(emit_summary, indent=2, default=str), encoding="utf-8"
+    )
     cap_daily = capital_daily_series(legs, starting_capital_usd=starting_capital_usd)
     if not cap_daily.empty:
         _save_df(cap_daily, dirs["metrics"] / f"{arm}_capital_daily.csv")
-        for pol in sorted(cap_daily["entry_policy"].dropna().unique()):
-            sub = cap_daily[cap_daily["entry_policy"] == pol]
-            label = f"{arm}/{pol}"
-            for sk in ("strategy_1", "strategy_2", "strategy_3"):
-                P.plot_compounded_capital(
-                    {label: sub}, plot_dir, strategy_key=sk,
-                    starting_capital_usd=starting_capital_usd, init_days=init_days,
-                )
-                P.plot_cumulative_pl_pct(
-                    {label: sub}, plot_dir, strategy_key=sk,
-                    starting_capital_usd=starting_capital_usd, init_days=init_days,
-                )
 
     write_daily_snapshot(
         dirs["daily_snapshots"],
@@ -235,9 +234,10 @@ def build_arm_analytics_asof(
     cum = M.cumulative_btc(legs)
     wr = M.rolling_win_rate(legs, window_days=30)
     wh_ts = M.weight_timeseries(wh)
+    # Daily asof: skip heavy rolling corr / monthly (full suite at arm end)
     corr_full = M.indicator_predictive_correlation(pred)
-    corr_roll = M.rolling_indicator_correlation(pred, window_days=30, step_days=7)
-    wvu = M.weight_vs_usefulness(wh, corr_roll) if arm == "adaptive" else pd.DataFrame()
+    corr_roll = pd.DataFrame()
+    wvu = pd.DataFrame()
     svr = M.score_vs_return(pred)
     buckets = M.accuracy_by_score_bucket(pred)
     wl = M.win_loss_summary(legs)
@@ -249,13 +249,13 @@ def build_arm_analytics_asof(
         sim = sim[sim["day_number"] <= day_number] if "day_number" in sim.columns else sim
     sim_stats = M.simultaneous_stats(sim, pred)
     rej = M.rejection_breakdown(pred)
-    monthly = M.monthly_performance(pred, legs, opp)
     btcd = M.btcd_regime_analysis(pred)
     updates = []
     upd_path = arm_dir / "weight_updates.json"
     if upd_path.exists():
         updates = json.loads(upd_path.read_text(encoding="utf-8"))
-    learn = M.learning_progress(pred, legs, updates) if arm == "adaptive" else pd.DataFrame()
+    learn = pd.DataFrame()
+    monthly = pd.DataFrame()
 
     for name, df in (
         ("cumulative_btc", cum),
@@ -264,48 +264,43 @@ def build_arm_analytics_asof(
         ("drawdown_series", dd),
         ("simultaneous_open", sim),
         ("rejection_breakdown", rej),
+        ("expectancy", M.expectancy_summary(legs)),
+        ("opportunity_funnel", M.opportunity_funnel(pred, opp, legs=legs)),
     ):
         if df is not None and not df.empty:
             _save_df(df, dirs["metrics"] / f"{arm}_{name}.csv")
 
-    plot_dir = dirs["plots"] / arm
-    plot_dir.mkdir(parents=True, exist_ok=True)
-    P.plot_btc_accumulation_by_strategy({arm: cum}, plot_dir, init_days=init_days)
-    P.plot_rolling_win_rate({arm: wr}, plot_dir, init_days=init_days)
-    if arm == "adaptive":
-        P.plot_adaptive_weights(wh_ts, plot_dir, init_days=init_days)
-        P.plot_weight_vs_usefulness(wvu, plot_dir)
-        P.plot_learning_progress(learn, plot_dir)
-    P.plot_indicator_correlations(corr_roll if not corr_roll.empty else corr_full, plot_dir)
-    P.plot_score_vs_return(svr, plot_dir)
-    P.plot_accuracy_buckets(buckets, plot_dir)
-    P.plot_drawdown({arm: dd}, plot_dir, init_days=init_days)
-    P.plot_simultaneous(sim, plot_dir, max_open=max_open, init_days=init_days)
-    P.plot_rejections(rej, plot_dir)
-    P.plot_monthly(monthly, plot_dir, arm)
-    P.plot_btcd_regimes(btcd, plot_dir)
-    P.plot_win_loss_bars({arm: wl}, plot_dir)
-    P.plot_entry_policy_btc(legs, plot_dir)
-    P.plot_entry_policy_win_rate(legs, plot_dir)
-    P.plot_recovered_trades(legs, plot_dir)
-
+    plot_dir = dirs["plots"]
+    emit_arm_plots(
+        arm=arm,
+        plots_root=plot_dir,
+        pred=pred,
+        opp=opp,
+        legs=legs,
+        wh_ts=wh_ts,
+        cum=cum,
+        wr=wr,
+        corr=corr_roll if not corr_roll.empty else corr_full,
+        buckets=buckets,
+        svr=svr,
+        wl=wl,
+        dd=dd,
+        sim=sim,
+        rej=rej,
+        btcd=btcd,
+        learn=learn,
+        wvu=wvu,
+        init_days=init_days,
+        max_open=max_open,
+        starting_capital_usd=starting_capital_usd,
+        max_day=day_number,
+        lite=True,  # daily checkpoint: primary dashboard only; full suite at arm end
+    )
     cap_daily = capital_daily_series(
         legs, starting_capital_usd=starting_capital_usd, max_day=day_number,
     )
     if not cap_daily.empty:
         _save_df(cap_daily, dirs["metrics"] / f"{arm}_capital_daily.csv")
-        for pol in sorted(cap_daily["entry_policy"].dropna().unique()):
-            sub = cap_daily[cap_daily["entry_policy"] == pol]
-            label = f"{arm}/{pol}"
-            for sk in ("strategy_1", "strategy_2", "strategy_3"):
-                P.plot_compounded_capital(
-                    {label: sub}, plot_dir, strategy_key=sk,
-                    starting_capital_usd=starting_capital_usd, init_days=init_days,
-                )
-                P.plot_cumulative_pl_pct(
-                    {label: sub}, plot_dir, strategy_key=sk,
-                    starting_capital_usd=starting_capital_usd, init_days=init_days,
-                )
 
     snap = {
         "day_number": day_number,
@@ -316,8 +311,17 @@ def build_arm_analytics_asof(
         "n_opportunities": len(opp),
         "n_legs": len(legs),
         "sim_stats": sim_stats,
+        "starting_capital_usd": starting_capital_usd,
         "telegram_enabled": False,
     }
+    # Compact capital snapshot for daily dashboard
+    if not cap_daily.empty:
+        last = (
+            cap_daily.sort_values("day_number")
+            .groupby(["entry_policy", "strategy_key"], as_index=False)
+            .tail(1)
+        )
+        snap["capital_accounts"] = last.to_dict(orient="records")
     snap_dir = dirs["daily_snapshots"] / f"day_{int(day_number):03d}"
     snap_dir.mkdir(parents=True, exist_ok=True)
     (snap_dir / "snapshot.json").write_text(json.dumps(snap, indent=2, default=str), encoding="utf-8")
@@ -368,7 +372,7 @@ def build_abc_analytics(
             starting_capital_usd=starting_capital_usd,
         )
 
-    # Comparison overlays
+    # Comparison overlays (organized subdirs)
     cum_by_arm = {}
     wr_by_arm = {}
     dd_by_arm = {}
@@ -381,18 +385,11 @@ def build_abc_analytics(
         wl_by_arm[arm] = M.win_loss_summary(tables["legs"])
         _save_df(cum_by_arm[arm], dirs["metrics"] / f"compare_cumulative_btc_{arm}.csv")
 
-    P.plot_btc_accumulation_by_strategy(cum_by_arm, dirs["plots"], init_days=init_days)
-    P.plot_rolling_win_rate(wr_by_arm, dirs["plots"], init_days=init_days)
-    P.plot_drawdown(dd_by_arm, dirs["plots"], init_days=init_days)
-    P.plot_win_loss_bars(wl_by_arm, dirs["plots"])
-
-    for sk in ("strategy_1", "strategy_2", "strategy_3"):
+    for sk in STRATEGY_KEYS:
         adv = M.adaptive_advantage_series(cum_by_arm, sk)
         if not adv.empty:
             _save_df(adv, dirs["metrics"] / f"adaptive_advantage_{sk}.csv")
-            P.plot_adaptive_advantage(adv, dirs["plots"], sk)
 
-    # Cross-arm capital overlays: Static/Equal/Adaptive × Normal/Late per strategy
     cap_labels: dict[str, pd.DataFrame] = {}
     for arm, ad in arm_dirs.items():
         tables = M.load_arm_tables(ad)
@@ -402,16 +399,17 @@ def build_abc_analytics(
         _save_df(cd, dirs["metrics"] / f"compare_capital_daily_{arm}.csv")
         for pol in sorted(cd["entry_policy"].dropna().unique()):
             cap_labels[f"{arm}/{pol}"] = cd[cd["entry_policy"] == pol]
-    if cap_labels:
-        for sk in ("strategy_1", "strategy_2", "strategy_3"):
-            P.plot_compounded_capital(
-                cap_labels, dirs["plots"], strategy_key=sk,
-                starting_capital_usd=starting_capital_usd, init_days=init_days,
-            )
-            P.plot_cumulative_pl_pct(
-                cap_labels, dirs["plots"], strategy_key=sk,
-                starting_capital_usd=starting_capital_usd, init_days=init_days,
-            )
+
+    emit_abc_comparison_plots(
+        plots_root=dirs["plots"],
+        cap_by_arm_policy=cap_labels,
+        cum_by_arm=cum_by_arm,
+        wr_by_arm=wr_by_arm,
+        dd_by_arm=dd_by_arm,
+        wl_by_arm=wl_by_arm,
+        init_days=init_days,
+        starting_capital_usd=starting_capital_usd,
+    )
 
     # Combined daily snapshot (all arms)
     write_daily_snapshot(
@@ -439,7 +437,12 @@ def build_abc_analytics(
         "analytics_root": str(root),
         "arms": {k: str(v) for k, v in arm_dirs.items()},
         "generated_utc": datetime.now(timezone.utc).isoformat(),
-        "plots": sorted(p.name for p in dirs["plots"].glob("*.png")),
+        "plots": sorted(
+            str(p.relative_to(dirs["plots"]))
+            for p in dirs["plots"].rglob("*.png")
+        )[:200],
+        "plot_layout": list(ensure_plot_layout(dirs["plots"]).keys()),
+        "starting_capital_usd": starting_capital_usd,
     }
     (dirs["reports"] / "analytics_index.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (dirs["reports"] / "analytics_index.md").write_text(

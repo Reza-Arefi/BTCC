@@ -67,7 +67,9 @@ def test_late_allowed_does_not_bypass_max_open():
     assert r["entry_classification"] == "MAX_OPEN_TRADES"
 
 
-def test_late_allowed_does_not_bypass_btc_d():
+def test_late_allowed_does_not_bypass_hard_health():
+    """Candle/data health still blocks; BTC.D-only unavailability is not a hard block
+    when health_allow_new_trades is True (isolation experiment)."""
     r = evaluate_entry_policy(
         policy=POLICY_LATE_ALLOWED,
         sm_decision=_sm_open(),
@@ -77,7 +79,21 @@ def test_late_allowed_does_not_bypass_btc_d():
         health_btc_d_available=False,
     )
     assert r["trade_suggested"] is False
-    assert r["entry_classification"] == "BTC_D_UNAVAILABLE"
+    assert r["entry_classification"] in ("BTC_D_UNAVAILABLE", "DATA_HEALTH_BLOCK")
+
+
+def test_btc_d_unavailable_does_not_reject_when_health_allows():
+    """With allow_new_trades=True, missing BTC.D alone must not reject."""
+    r = evaluate_entry_policy(
+        policy=POLICY_LATE_ALLOWED,
+        sm_decision=_sm_open(),
+        late_entry_score=0.2,
+        late_entry_class="NORMAL",
+        health_allow_new_trades=True,
+        health_btc_d_available=False,
+    )
+    assert r["trade_suggested"] is True
+    assert r["entry_classification"] == "NORMAL_ENTRY"
 
 
 def test_is_late_extended_threshold():
@@ -93,9 +109,11 @@ def test_config_has_both_entry_policies():
     assert POLICY_LATE_ALLOWED in enabled
 
 
-def test_three_exit_strategies_unchanged():
+def test_five_exit_strategies_configured():
     sim = load_sim_config()
-    assert set(sim["strategies"]) == {"strategy_1", "strategy_2", "strategy_3"}
+    assert set(sim["strategies"]) == {
+        "strategy_1", "strategy_2", "strategy_3", "strategy_4", "strategy_5",
+    }
 
 
 def test_allow_trading_false():

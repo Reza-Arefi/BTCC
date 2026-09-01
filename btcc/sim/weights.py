@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from btcc.sim.score import FACTOR_KEYS, normalize_weights
+from btcc.sim.score import ACTIVE_SIGNAL_KEYS, FACTOR_KEYS, normalize_weights
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ def estimate_weights_from_window(
     ns: dict[str, int] = {}
     raw_scores: dict[str, float] = {}
 
-    for key in FACTOR_KEYS:
+    for key in ACTIVE_SIGNAL_KEYS:
         col = FACTOR_COL[key]
         if col not in labeled.columns:
             ics[key] = float("nan")
@@ -146,7 +146,7 @@ def estimate_weights_from_window(
     raw = {k: float(v / raw_sum) for k, v in raw_scores.items()}
     prev = normalize_weights(prev_weights)
     b = float(np.clip(stability_blend, 0.0, 1.0))
-    mixed = {k: (1.0 - b) * prev[k] + b * raw[k] for k in FACTOR_KEYS}
+    mixed = {k: (1.0 - b) * prev.get(k, 0.0) + b * raw[k] for k in ACTIVE_SIGNAL_KEYS}
     mixed = {k: float(np.clip(v, weight_min, weight_max)) for k, v in mixed.items()}
     if any(not np.isfinite(v) for v in mixed.values()) or sum(mixed.values()) <= 0:
         return None, {
@@ -164,6 +164,7 @@ def estimate_weights_from_window(
         "ns": ns,
         "raw_weights": raw,
         "ycol": ycol,
+        "active_signal_keys": list(ACTIVE_SIGNAL_KEYS),
         "learning_window_start": str(labeled["timestamp"].min()),
         "learning_window_end": str(labeled["timestamp"].max()),
     }

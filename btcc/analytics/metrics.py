@@ -17,7 +17,13 @@ from btcc.sim.maturity import filter_matured_for_learning
 from btcc.sim.score import FACTOR_KEYS
 
 DEFAULT_SCORE_BINS = [0.0, 0.20, 0.40, 0.60, 0.70, 0.80, 1.01]
-STRATEGY_KEYS = ("strategy_1", "strategy_2", "strategy_3")
+STRATEGY_KEYS = (
+    "strategy_1",
+    "strategy_2",
+    "strategy_3",
+    "strategy_4",
+    "strategy_5",
+)
 
 
 def _utc_series(s: pd.Series) -> pd.Series:
@@ -552,4 +558,172 @@ def adaptive_advantage_series(
         out = merged
         out[col] = out["adaptive_cum_btc"] - out[f"{arm}_cum"]
     out["strategy_key"] = strategy_key
+    return out
+
+
+STRATEGY_LABELS = {
+    "strategy_1": "S1",
+    "strategy_2": "S2",
+    "strategy_3": "S3",
+    "strategy_4": "S4",
+    "strategy_5": "S5",
+}
+
+
+def expectancy_summary(legs: pd.DataFrame) -> pd.DataFrame:
+    """E[R] = P(win)*AvgWin + P(loss)*AvgLoss (losers negative)."""
+    rows = []
+    if legs is None or legs.empty or "strategy_key" not in legs.columns:
+        return pd.DataFrame()
+    df = legs.copy()
+    if "closed" in df.columns:
+        df = df[df["closed"] == True]  # noqa: E712
+    if "entry_policy" not in df.columns:
+        df["entry_policy"] = "ALL"
+    for (pol, sk), g in df.groupby(["entry_policy", "strategy_key"], dropna=False):
+        pnl = pd.to_numeric(g.get("pnl_btc"), errors="coerce").dropna()
+        if pnl.empty:
+            continue
+        wins = pnl[pnl > 0]
+        losses = pnl[pnl <= 0]
+        p_win = float(len(wins) / len(pnl))
+        p_loss = float(len(losses) / len(pnl))
+        avg_w = float(wins.mean()) if len(wins) else 0.0
+        avg_l = float(losses.mean()) if len(losses) else 0.0
+        rows.append({
+            "entry_policy": str(pol),
+            "strategy_key": str(sk),
+            "n_trades": int(len(pnl)),
+            "win_rate": p_win,
+            "avg_winner_btc": avg_w if len(wins) else None,
+            "avg_loser_btc": avg_l if len(losses) else None,
+            "expectancy_btc": p_win * avg_w + p_loss * avg_l,
+            "profit_factor": (
+                float(wins.sum() / (-losses.sum()))
+                if len(losses) and float((-losses).sum()) > 0 else None
+            ),
+        })
+    return pd.DataFrame(rows)
+
+
+def expectancy_by_day(legs: pd.DataFrame) -> pd.DataFrame:
+    """Cumulative expectancy through Day N (expanding window)."""
+    rows = []
+    if legs is None or legs.empty or "day_number" not in legs.columns:
+        return pd.DataFrame()
+    df = legs.copy()
+    if "closed" in df.columns:
+        df = df[df["closed"] == True]  # noqa: E712
+    if "entry_policy" not in df.columns:
+        df["entry_policy"] = "ALL"
+    df["pnl_btc"] = pd.to_numeric(df.get("pnl_btc"), errors="coerce")
+    df = df.dropna(subset=["day_number", "pnl_btc"])
+    for (pol, sk), g in df.groupby(["entry_policy", "strategy_key"], dropna=False):
+        g = g.sort_values("day_number")
+        max_d = int(g["day_number"].max())
+        for day in range(1, max_d + 1):
+            sub = g[g["day_number"] <= day]["pnl_btc"]
+            if len(sub) < 3:
+                continue
+            wins = sub[sub > 0]
+            losses = sub[sub <= 0]
+            p_win = len(wins) / len(sub)
+            p_loss = len(losses) / len(sub)
+            avg_w = float(wins.mean()) if len(wins) else 0.0
+            avg_l = float(losses.mean()) if len(losses) else 0.0
+            gp = float(wins.sum()) if len(wins) else 0.0
+            gl = float((-losses).sum()) if len(losses) else 0.0
+            rows.append({
+                "entry_policy": str(pol),
+                "strategy_key": str(sk),
+                "day_number": day,
+                "n_trades": int(len(sub)),
+                "win_rate": float(p_win),
+                "expectancy_btc": float(p_win * avg_w + p_loss * avg_l),
+                "profit_factor": (gp / gl) if gl > 0 else None,
+            })
+    return pd.DataFrame(rows)
+
+
+def opportunity_funnel(
+    pred: pd.DataFrame,
+    opp: pd.DataFrame | None = None,
+    legs: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Overall funnel counts. BTC.D is NOT a rejection stage (contextual only)."""
+    stages = [
+        "predictions",
+        "valid_data",
+        "score_ge_0_60",
+        "normal_eligibility",
+        "late_entry_acceptance",
+        "opportunity",
+        "opened",
+        "closed",
+    ]
+    if pred is None or pred.empty:
+        return pd.DataFrame({"stage": stages, "count": [0] * len(stages)})
+    # Prefer one row per (timestamp, symbol) if dual entry policies duplicate predictions
+    base = pred
+    if "entry_policy" in pred.columns:
+        # Count unique prediction events from NORMAL book when present
+        n_mask = pred["entry_policy"] == "NORMAL_FILTERED"
+        base = pred[n_mask] if n_mask.any() else pred.drop_duplicates(subset=["timestamp", "symbol"], keep="first")
+    n_pred = len(base)
+    s = pd.to_numeric(base.get("S"), errors="coerce")
+    # Valid data: score present (non-null S); excludes incomplete factor rows
+    n_valid = int(s.notna().sum()) if s is not None else 0
+    n_thr = int((s >= 0.60).sum()) if s is not None else 0
+    cls = base.get("entry_classification")
+    n_normal = int((cls == "NORMAL_ENTRY").sum()) if cls is not None else 0
+    # Late accepted from LATE policy rows
+    if "entry_policy" in pred.columns:
+        late = pred[pred["entry_policy"] == "LATE_ENTRY_ALLOWED"]
+        n_late = int((late.get("entry_classification") == "LATE_ENTRY_ACCEPTED").sum()) if not late.empty else 0
+        n_opened_pred = int(pred.get("trade_opened", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if "trade_opened" in pred.columns else 0
+    else:
+        n_late = int((cls == "LATE_ENTRY_ACCEPTED").sum()) if cls is not None else 0
+        n_opened_pred = int(pred.get("trade_opened", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if "trade_opened" in pred.columns else 0
+    n_opp = int(len(opp)) if opp is not None and not opp.empty else n_opened_pred
+    n_opened = n_opp if n_opp else n_opened_pred
+    n_closed = 0
+    if legs is not None and not legs.empty:
+        closed = legs
+        if "closed" in closed.columns:
+            closed = closed[closed["closed"] == True]  # noqa: E712
+        # Count unique opportunities that closed at least one leg when possible
+        if "opportunity_id" in closed.columns:
+            n_closed = int(closed["opportunity_id"].nunique())
+        else:
+            n_closed = int(len(closed))
+    elif opp is not None and not opp.empty and "status" in opp.columns:
+        n_closed = int(opp["status"].astype(str).str.lower().eq("closed").sum())
+    return pd.DataFrame({
+        "stage": stages,
+        "count": [n_pred, n_valid, n_thr, n_normal, n_late, n_opp, n_opened, n_closed],
+    })
+
+
+def rejection_without_btcd(pred: pd.DataFrame) -> pd.DataFrame:
+    """Rejection breakdown excluding BTC.D / health diagnostic stages."""
+    rej = rejection_breakdown(pred)
+    if rej.empty:
+        return rej
+    drop = rej["rejection_reason"].astype(str).str.upper().str.contains(
+        "BTC_D|DIAG_|HEALTH", regex=True, na=False
+    )
+    return rej[~drop].copy()
+
+
+def btcd_over_days(pred: pd.DataFrame) -> pd.DataFrame:
+    """Contextual BTC.D series by day_number (mean per day)."""
+    if pred is None or pred.empty:
+        return pd.DataFrame()
+    if "day_number" not in pred.columns or "btc_dominance" not in pred.columns:
+        return pd.DataFrame()
+    g = pred.copy()
+    g["btc_dominance"] = pd.to_numeric(g["btc_dominance"], errors="coerce")
+    g = g.dropna(subset=["day_number", "btc_dominance"])
+    out = g.groupby("day_number", as_index=False)["btc_dominance"].mean()
+    out = out.rename(columns={"btc_dominance": "btc_d_mean"})
     return out

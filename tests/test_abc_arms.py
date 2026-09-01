@@ -7,6 +7,7 @@ import pandas as pd
 from btcc.config import load_config
 from btcc.sim.maturity import filter_matured_for_learning, outcome_mature_at
 from btcc.sim.score import (
+    ACTIVE_SIGNAL_KEYS,
     FACTOR_KEYS,
     combined_score,
     equal_factor_weights,
@@ -21,7 +22,9 @@ def test_static_weights_from_signal_config():
     w = static_factor_weights(cfg)
     assert set(w) == set(FACTOR_KEYS)
     assert abs(sum(w.values()) - 1.0) < 1e-9
-    raw = cfg["factors"]["weights"]
+    assert w["btc_regime"] == 0.0
+    raw = dict(cfg["factors"]["weights"])
+    raw["btc_regime"] = 0.0
     expected = normalize_weights(raw)
     for k in FACTOR_KEYS:
         assert abs(w[k] - expected[k]) < 1e-12
@@ -30,8 +33,9 @@ def test_static_weights_from_signal_config():
 def test_equal_weights_one_over_n():
     w = equal_factor_weights()
     assert set(w) == set(FACTOR_KEYS)
-    n = len(FACTOR_KEYS)
-    for k in FACTOR_KEYS:
+    assert w["btc_regime"] == 0.0
+    n = len(ACTIVE_SIGNAL_KEYS)
+    for k in ACTIVE_SIGNAL_KEYS:
         assert abs(w[k] - 1.0 / n) < 1e-12
     assert abs(sum(w.values()) - 1.0) < 1e-9
 

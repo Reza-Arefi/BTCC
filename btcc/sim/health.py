@@ -69,19 +69,20 @@ def evaluate_health(
     if not indicator_ok:
         reasons.append("INDICATOR_CALC_FAILED")
 
-    # BTC.D
+    # BTC.D — always evaluated & logged; optionally blocks trades
     btc_d_available = False
     btc_d_status = "MISSING"
     btc_d_age = None
     btc_d_ts_str = None
+    btc_d_diag: list[str] = []
     if dominance_pct is None:
-        reasons.append("BTC_D_UNAVAILABLE")
+        btc_d_diag.append("BTC_D_UNAVAILABLE")
         btc_d_status = "UNAVAILABLE"
     else:
         lo = float(bd.get("min_valid_pct", 20.0))
         hi = float(bd.get("max_valid_pct", 80.0))
         if not (lo <= float(dominance_pct) <= hi):
-            reasons.append(f"BTC_D_OUT_OF_RANGE value={dominance_pct}")
+            btc_d_diag.append(f"BTC_D_OUT_OF_RANGE value={dominance_pct}")
             btc_d_status = "OUT_OF_RANGE"
         else:
             btc_d_available = True
@@ -92,13 +93,22 @@ def evaluate_health(
             btc_d_ts_str = dts.isoformat()
             max_bd_age = float(bd.get("max_age_seconds", 7200))  # BTC_D_MAX_AGE default
             if btc_d_age > max_bd_age:
-                reasons.append(f"BTC_D_STALE age_s={btc_d_age:.0f}>{max_bd_age:.0f}")
+                btc_d_diag.append(f"BTC_D_STALE age_s={btc_d_age:.0f}>{max_bd_age:.0f}")
                 btc_d_status = "STALE"
                 btc_d_available = False
 
-    require_bd = bool(bd.get("require_for_new_trades", True))
+    # Architectural isolation: BTC.D is contextual by default — diagnostics only.
+    # require_for_new_trades=true restores legacy gate (not used in isolation experiment).
+    require_bd = bool(bd.get("require_for_new_trades", False))
+    if require_bd:
+        reasons.extend(btc_d_diag)
+    else:
+        # Keep diagnostic reasons visible but tagged so they do not look like trade blocks
+        for r in btc_d_diag:
+            reasons.append(f"DIAG_{r}" if not r.startswith("DIAG_") else r)
+
     allow = True
-    block_reasons = [r for r in reasons if not r.startswith("SHORT_HISTORY")]
+    block_reasons = [r for r in reasons if not r.startswith("SHORT_HISTORY") and not r.startswith("DIAG_")]
     # Short history alone can still allow research predictions but blocks trades if below min
     if any(r.startswith("STALE_CANDLES") for r in reasons):
         allow = False
@@ -109,7 +119,9 @@ def evaluate_health(
     if any(r.startswith("SHORT_HISTORY") for r in reasons):
         allow = False
 
-    ok = len(reasons) == 0
+    # ok reflects hard data health (candles/indicators), not BTC.D diagnostics
+    hard = [r for r in reasons if not r.startswith("DIAG_")]
+    ok = len(hard) == 0
     return HealthReport(
         ok=ok,
         allow_new_trades=allow,

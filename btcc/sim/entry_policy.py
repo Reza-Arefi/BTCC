@@ -1,11 +1,14 @@
-"""Entry policies for Adaptive V2 — orthogonal to exit strategies S1/S2/S3.
+"""Entry policies for Adaptive V2 — orthogonal to exit strategies S1–S5.
 
 Policies:
   NORMAL_FILTERED   — apply Late Entry / extended-filter rejection
   LATE_ENTRY_ALLOWED — same fundamentals, but do NOT reject solely for late/extended
 
-Neither policy bypasses: S threshold, data/BTC.D health, max-10, one-per-pair,
+Neither policy bypasses: S threshold, candle/data health, max-10, one-per-pair,
 closed-bar timing, fees/slippage, long-only, or other hard safety gates.
+
+BTC.D freshness is contextual/diagnostic by default and does not reject trades
+when sim.btc_d_health.require_for_new_trades is false.
 """
 
 from __future__ import annotations

@@ -12,7 +12,7 @@ Economic model (spot, long-only, no leverage):
 PnL_BTC = exit_btc_received - entry_btc_spent
 PnL_USD_equiv = PnL_BTC * btc_usdt_at_exit (display only)
 
-All three strategies share the same entry economics and cost rates.
+All exit strategies share the same entry economics and cost rates.
 """
 
 from __future__ import annotations

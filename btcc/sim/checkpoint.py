@@ -51,6 +51,11 @@ def summarize_day(
         rejected_all = (
             pred_df["rejection_reason"].fillna("NONE").value_counts().astype(int).to_dict()
         )
+    # Trading-facing rejections: strip BTC.D / health diagnostic labels
+    rejected_trading = {
+        k: v for k, v in rejected_all.items()
+        if not any(tok in str(k).upper() for tok in ("BTC_D", "DIAG_", "HEALTH"))
+    }
     summary: dict[str, Any] = {
         "day_number": int(day_number),
         "timestamp": simulated_timestamp,
@@ -64,12 +69,44 @@ def summarize_day(
         "active_weight_version": (schedule_active or {}).get("version_id"),
         "current_weights": (schedule_active or {}).get("weights"),
         "n_weight_updates": len(update_log),
-        "rejected_signals": rejected_all,
+        "rejected_signals": rejected_trading,
+        "rejected_signals_all": rejected_all,
     }
     if not day_pred.empty and "rejection_reason" in day_pred.columns:
-        summary["rejected_signals_today"] = (
+        today_rej = (
             day_pred["rejection_reason"].fillna("NONE").value_counts().astype(int).to_dict()
         )
+        summary["rejected_signals_today"] = {
+            k: v for k, v in today_rej.items()
+            if not any(tok in str(k).upper() for tok in ("BTC_D", "DIAG_", "HEALTH"))
+        }
+
+    # Did a weight update land on this simulated calendar day?
+    weight_update_today = False
+    try:
+        day_date = pd.Timestamp(simulated_timestamp)
+        if day_date.tzinfo is None:
+            day_date = day_date.tz_localize("UTC")
+        else:
+            day_date = day_date.tz_convert("UTC")
+        day_date = day_date.normalize()
+        for u in update_log or []:
+            ca = u.get("calculated_at") or u.get("effective_from")
+            if not ca:
+                continue
+            ts = pd.Timestamp(ca)
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+            else:
+                ts = ts.tz_convert("UTC")
+            if ts.normalize() == day_date:
+                weight_update_today = True
+                break
+    except Exception:
+        weight_update_today = False
+    summary["weight_update_occurred_today"] = bool(
+        weight_mode == "adaptive" and weight_update_today
+    )
 
     def _slice_metrics(
         legs: pd.DataFrame,
@@ -127,7 +164,10 @@ def summarize_day(
         }
 
     policies = ["NORMAL_FILTERED", "LATE_ENTRY_ALLOWED"]
-    strategies = ["strategy_1", "strategy_2", "strategy_3", "S1", "S2", "S3"]
+    strategies = [
+        "strategy_1", "strategy_2", "strategy_3", "strategy_4", "strategy_5",
+        "S1", "S2", "S3", "S4", "S5",
+    ]
     # Normalize strategy keys present in data
     present_sk: list[str] = []
     if not legs_df.empty and "strategy_key" in legs_df.columns:
@@ -135,7 +175,9 @@ def summarize_day(
     if not present_sk and not opp_df.empty and "strategy_key" in opp_df.columns:
         present_sk = sorted({str(x) for x in opp_df["strategy_key"].dropna().unique()})
     if not present_sk:
-        present_sk = ["strategy_1", "strategy_2", "strategy_3"]
+        present_sk = [
+            "strategy_1", "strategy_2", "strategy_3", "strategy_4", "strategy_5",
+        ]
 
     by: dict[str, Any] = {}
     present_pol: list[str] = []
@@ -168,6 +210,7 @@ def summarize_day(
             "matured_sample_count": last.get("n_samples"),
             "phase": last.get("phase"),
             "status": last.get("status"),
+            "weight_update_occurred_today": bool(summary.get("weight_update_occurred_today")),
         }
     try:
         from btcc.analytics.capital import capital_daily_series
@@ -184,6 +227,7 @@ def summarize_day(
                 "starting_capital_usd": float(starting_capital_usd),
                 "asof_day": int(day_number),
                 "accounts": today.to_dict(orient="records"),
+                "todays_realized_PnL_usd_sum": float(today["daily_PnL"].sum()) if not today.empty else 0.0,
             }
     except Exception:
         pass

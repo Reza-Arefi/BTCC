@@ -1,0 +1,113 @@
+# Selector E-v1 live / paper engine configuration.
+# E mathematical logic unchanged from baseline-selector-E-v1 (rank_ewma, 7d half-life).
+# Historical 365d experiment continues separately; this config governs live operation.
+
+selector_live:
+  enabled: false  # set true to activate SelectorLiveEngine (replaces Adaptive V2 sim)
+  version: "E-v1"
+  bot_version: "3.0.0-selector-E-v1"
+
+  # Entry — same as baseline experiment
+  long_threshold: 0.60
+  upper_threshold: null
+  disable_late_entry_rejection: true
+  weight_mode: static
+  disable_weight_updates: true
+
+  starting_capital_usd: 1000.0
+  notional_usd: 100.0
+  max_open_opportunities: 10
+  one_opportunity_per_pair: true
+
+  btc_d_health:
+    require_for_new_trades: false
+
+  # Live selector: E only (rank_ewma baseline — do not tune without versioned experiment)
+  selector_id: selector_e
+  selector_arm_label: E
+  selector:
+    kind: rank_ewma
+    half_life_days: 7
+
+  switching:
+    minimum_selection_duration_hours: 6
+    switch_margin: 0.0005
+
+  # Counterfactual trailing strategies available to E (T1–T10 kept for analysis)
+  counterfactual_strategy_keys:
+    - trail_1
+    - trail_2
+    - trail_3
+    - trail_4
+    - trail_5
+    - trail_6
+    - trail_7
+    - trail_8
+    - trail_9
+    - trail_10
+
+  # Strategy geometry — first 10 from baseline (T1–T10); see selector_experiment_config.yaml
+  strategies_source: configs/selector_experiment_config.yaml
+
+  regime:
+    classes:
+      - RANGE
+      - LOW_VOL_TREND
+      - NORMAL_TREND
+      - STRONG_TREND
+      - HIGH_VOLATILITY
+    rules:
+      high_vol_natr: 0.035
+      range_adx: 20.0
+      low_trend_adx: 30.0
+      normal_trend_adx: 40.0
+
+  s_bands:
+    - { label: "0.60-0.65", lo: 0.60, hi: 0.65 }
+    - { label: "0.65-0.70", lo: 0.65, hi: 0.70 }
+    - { label: "0.70-0.80", lo: 0.70, hi: 0.80 }
+    - { label: "0.80+", lo: 0.80, hi: null }
+
+  storage:
+    root_dir: data/selector_live
+    predictions_path: data/selector_live/predictions.csv
+    opportunities_path: data/selector_live/opportunities.csv
+    strategy_legs_path: data/selector_live/strategy_legs.csv
+    selection_audit_path: data/selector_live/selection_audit.csv
+    runtime_state_path: data/selector_live/selector_runtime_state.json
+    state_path: data/selector_live/state.json
+    analytics_dir: data/selector_live/analytics
+    retention_days: 365
+
+  analysis_windows:
+    - { id: "365d", label: "LAST 365 DAYS", hours: 8760 }
+    - { id: "180d", label: "LAST 180 DAYS", hours: 4320 }
+    - { id: "90d", label: "LAST 90 DAYS", hours: 2160 }
+    - { id: "30d", label: "LAST 30 DAYS", hours: 720 }
+    - { id: "10d", label: "LAST 10 DAYS", hours: 240 }
+    - { id: "1d", label: "YESTERDAY", kind: "calendar_yesterday" }
+    - { id: "4h", label: "LAST 4 HOURS", hours: 4 }
+
+  telegram:
+    send_trade_open: true
+    send_trade_close: true
+
+  safety:
+    enabled: true
+    initial_state: NORMAL
+    thresholds:
+      warning_consecutive_losses: 5
+      halt_consecutive_losses: 10
+      warning_rolling_dd_pct: 3.0
+      halt_rolling_dd_pct: 6.0
+      warning_pf_below: 1.0
+      halt_pf_below: 0.8
+      warning_mean_regret_pct: 0.5
+    halt_blocks_new_entries: true
+
+  alerts:
+    send_startup: true
+    send_shutdown: true
+    send_data_failure: true
+    send_runtime_error: true
+    send_safety_state_change: true

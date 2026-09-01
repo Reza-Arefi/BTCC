@@ -263,8 +263,11 @@ class SelectorState:
         history: CounterfactualHistory,
         asof: pd.Timestamp,
         regime: str | None,
+        strategy_keys: tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         scores = self.compute_scores(history, asof, regime)
+        if strategy_keys:
+            scores = {k: scores.get(k, 0.0) for k in strategy_keys}
         candidate_k, candidate_v, second_k, second_v = _pick_best(scores)
         current_k = self.current_strategy_key
         current_v = scores.get(current_k, 0.0)
@@ -330,13 +333,17 @@ class SelectorState:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> SelectorState:
         lst = raw.get("last_switch_ts")
+        last_ts = None
+        if lst:
+            ts = pd.Timestamp(lst)
+            last_ts = ts.tz_convert("UTC") if ts.tzinfo else ts.tz_localize("UTC")
         st = cls(
             selector_id=str(raw["selector_id"]),
             arm_label=str(raw["arm_label"]),
             kind=str(raw["kind"]),
             cfg=dict(raw.get("cfg") or {}),
             current_strategy_key=str(raw.get("current_strategy_key", DEFAULT_STRATEGY_KEY)),
-            last_switch_ts=pd.Timestamp(lst).tz_localize("UTC") if lst else None,
+            last_switch_ts=last_ts,
             n_switches=int(raw.get("n_switches", 0)),
             time_on_strategy_seconds=dict(raw.get("time_on_strategy_seconds") or {}),
             min_duration_hours=float(raw.get("min_duration_hours", 6)),
@@ -372,6 +379,21 @@ def build_selector_group(sim: dict[str, Any]) -> dict[str, SelectorState]:
             switch_margin=margin,
         )
     return out
+
+
+def build_selector_e(sl: dict[str, Any]) -> SelectorState:
+    """Build single Selector E instance for live engine (baseline E-v1)."""
+    sw = sl.get("switching") or {}
+    cfg = dict(sl.get("selector") or {})
+    cfg.setdefault("kind", "rank_ewma")
+    return SelectorState(
+        selector_id=str(sl.get("selector_id", "selector_e")),
+        arm_label=str(sl.get("selector_arm_label", "E")),
+        kind=str(cfg.get("kind", "rank_ewma")),
+        cfg=cfg,
+        min_duration_hours=float(sw.get("minimum_selection_duration_hours", 6)),
+        switch_margin=float(sw.get("switch_margin", 0.0005)),
+    )
 
 
 def oracle_best_counterfactual(counterfactual_pnls: dict[str, float]) -> tuple[str, float]:

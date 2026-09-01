@@ -1,0 +1,44 @@
+{
+  "baseline_id": "baseline-selector-E-v1",
+  "created_utc": "2026-09-01T15:30:00+00:00",
+  "git_tag": "baseline-selector-E-v1",
+  "experiment_kind": "selector_experiment_v1",
+  "status": "INTERIM_BASELINE",
+  "note": "Code/math baseline frozen at tag. Historical 365d run may continue separately for research.",
+  "historical_run": {
+    "output_dir": "results/selector_compare_365d_thr0p60_20260901_132655",
+    "launch_manifest": "results/SELECTOR_EXPERIMENT_LAUNCH_20260901_132655.json",
+    "git_sha_at_launch": "6c9b5fb431ae80f207f99be677c02472fa80230d",
+    "as_of_day_interim": 115,
+    "n_opportunities_interim": 454
+  },
+  "candidate_selector": "E",
+  "selector_kind": "rank_ewma",
+  "selector_params": {
+    "half_life_days": 7,
+    "minimum_selection_duration_hours": 6,
+    "switch_margin": 0.0005
+  },
+  "interim_results_day_115": {
+    "E": {
+      "cum_ret_pct": 30.16,
+      "avg_trade_pct": 0.67,
+      "n_trades": 453,
+      "selection_concentration": {"T1": 99.1, "T7": 0.9},
+      "observation": "E ≈ T1 during this period; marginal outperformance, not proven dynamic superiority"
+    },
+    "T1": {"cum_ret_pct": 29.6, "avg_trade_pct": 0.65, "n_trades": 453},
+    "T4_benchmark": {"note": "see selector_metrics.json in run dir"}
+  },
+  "entry": {
+    "long_threshold": 0.60,
+    "upper_threshold": null,
+    "static_weights": true,
+    "late_entry_rejection": false
+  },
+  "do_not_change_before_experiments": [
+    "Selector E rank_ewma mathematical logic",
+    "E half_life_days=7 until walk-forward experiments",
+    "T1-T12 geometry in selector_experiment_config.yaml"
+  ]
+}

@@ -36,6 +36,13 @@ try:
 except Exception:  # pragma: no cover - sim package always present in tree
     AdaptiveSimEngine = None  # type: ignore
 
+try:
+    from btcc.sim.selector_live_config import load_selector_live_config
+    from btcc.sim.selector_live_engine import SelectorLiveEngine
+except Exception:  # pragma: no cover
+    load_selector_live_config = None  # type: ignore
+    SelectorLiveEngine = None  # type: ignore
+
 from btcc.runtime_persist import RuntimeState
 
 logger = logging.getLogger(__name__)
@@ -93,13 +100,38 @@ class SignalEngine:
             )
         # Adaptive V2 — LONG ALT/BTC virtual sim (separate from Champion archive)
         self.sim_engine = None
+        self.selector_live_engine = None
         sim_cfg = cfg.get("sim") or {}
         rt_path = (sim_cfg.get("storage") or {}).get(
             "runtime_state_path", "data/sim/runtime_state.json"
         )
         root = Path(cfg.get("_root") or ".")
         self.runtime = RuntimeState(root / rt_path if not Path(rt_path).is_absolute() else Path(rt_path))
-        if AdaptiveSimEngine is not None and sim_cfg.get("enabled", False):
+
+        selector_live_cfg = None
+        if load_selector_live_config is not None:
+            try:
+                selector_live_cfg = load_selector_live_config()
+            except Exception as e:
+                logger.warning("Selector live config load failed: %s", e)
+
+        if (
+            SelectorLiveEngine is not None
+            and selector_live_cfg is not None
+            and bool(selector_live_cfg.get("enabled", False))
+        ):
+            self.selector_live_engine = SelectorLiveEngine(
+                cfg,
+                selector_live_cfg,
+                tg_send=self.tg.send,
+            )
+            self.selector_live_engine.notify_startup()
+            logger.info(
+                "Selector E-v1 live enabled | version=%s | threshold=%.2f",
+                selector_live_cfg.get("selector_version"),
+                float(selector_live_cfg.get("long_threshold", 0.60)),
+            )
+        elif AdaptiveSimEngine is not None and sim_cfg.get("enabled", False):
             self.sim_engine = AdaptiveSimEngine(
                 cfg,
                 sim_cfg,
@@ -446,8 +478,23 @@ class SignalEngine:
                 int(self.cfg["late_entry"]["alert_cooldown_minutes"]),
             )
 
-        # Adaptive V2: signed score S, crossing SM, virtual LONG ALT/BTC sims
-        if self.sim_engine is not None and ranked:
+        # Selector E-v1 or Adaptive V2 paper sim
+        if self.selector_live_engine is not None and ranked:
+            try:
+                dom_ts = dom_obs_ts
+                dom_src = getattr(dom, "source", None) if dom is not None else None
+                self.selector_live_engine.process_ranked_cycle(
+                    ranked,
+                    decision_ts=ts,
+                    rel_panels=alt_btc_panels,
+                    btc_df=btc,
+                    dominance_pct=dominance_pct,
+                    dominance_ts=dom_ts,
+                    dominance_source=dom_src,
+                )
+            except Exception as e:
+                logger.exception("Selector E-v1 live cycle failed: %s", e)
+        elif self.sim_engine is not None and ranked:
             try:
                 dom_ts = dom_obs_ts
                 dom_src = getattr(dom, "source", None) if dom is not None else None

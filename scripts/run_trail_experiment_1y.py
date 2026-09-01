@@ -29,7 +29,11 @@ def main() -> int:
 
     from btcc.config import load_config
     from btcc.sim.trail_backtest import run_trail_experiment_backtest
-    from btcc.sim.trail_config import load_trail_experiment_config, validate_trail_strategies
+    from btcc.sim.trail_config import (
+        load_trail_experiment_config,
+        pre_run_config_summary,
+        validate_trail_strategies,
+    )
 
     cfg = load_config()
     if bool((cfg.get("safety") or {}).get("allow_trading", False)):
@@ -43,24 +47,36 @@ def main() -> int:
         logger.error("Strategy validation failed: %s", errs)
         return 2
 
+    summary_text = pre_run_config_summary(sim)
+    logger.info("PRE-RUN CONFIG:\n%s", summary_text)
+
     try:
-        git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        git_sha = subprocess.check_output(
+            ["git", "-c", f"safe.directory={ROOT}", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+        ).strip()
     except Exception:
         git_sha = "UNKNOWN"
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     meta = {
-        "experiment": "trail_exit_geometry_1y",
+        "experiment": "trail_exit_geometry_1y_v2",
+        "experiment_kind": "trail_exit_v2",
         "started_utc": datetime.now(timezone.utc).isoformat(),
         "git_sha": git_sha,
         "days": 365,
         "entry_band": [sim["long_threshold"], sim["upper_threshold"]],
+        "entry_band_note": "inclusive_lower_exclusive_upper",
         "strategies": list((sim.get("strategies") or {}).keys()),
-        "benchmark": sim.get("benchmark_strategy_key", "trail_3"),
+        "benchmark": sim.get("benchmark_strategy_key", "trail_5"),
+        "exhaustion_rejection": False,
+        "weight_mode": "static",
         "telegram": "OFF",
         "allow_trading": False,
         "auto_live_handoff": False,
         "unit": "btcc-trail-experiment-1y",
+        "pre_run_config": summary_text,
     }
     meta_path = ROOT / "results" / f"TRAIL_EXPERIMENT_LAUNCH_{stamp}.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)

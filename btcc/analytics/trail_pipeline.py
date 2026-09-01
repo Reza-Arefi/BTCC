@@ -39,7 +39,7 @@ def build_trail_analytics_asof(
     eval_start: str,
     starting_capital_usd: float = 1000.0,
     analytics_root: Path | None = None,
-    benchmark_key: str = "trail_3",
+    benchmark_key: str = "trail_5",
 ) -> Path:
     """Build as-of analytics and plots for trail experiment through day_number."""
     out_dir = Path(out_dir)
@@ -63,7 +63,7 @@ def build_trail_analytics_asof(
     regime = _regime_metrics(closed)
 
     manifest = {
-        "experiment_kind": "trail_exit_v1",
+        "experiment_kind": "trail_exit_v2",
         "as_of_day": int(day_number),
         "eval_start": eval_start,
         "starting_capital_usd": starting_capital_usd,

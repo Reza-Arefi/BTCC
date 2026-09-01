@@ -372,10 +372,10 @@ def run_trail_experiment_backtest(
 
     summary = _summarize(pred_df, legs_df, lo, days, dom_series, max_simultaneous=max_simultaneous, max_open_rejects=max_open_rejects)
     summary.update({
-        "experiment_kind": "trail_exit_v1",
+        "experiment_kind": "trail_exit_v2",
         "weight_mode": "trail_static",
         "upper_threshold": hi,
-        "benchmark_strategy_key": sim.get("benchmark_strategy_key", "trail_3"),
+        "benchmark_strategy_key": sim.get("benchmark_strategy_key", "trail_5"),
         "n_opportunities": len(opp_df),
         "requested_days": days,
         "actual_normal_pair_coverage_days": _normal_pair_coverage_days(panels),

@@ -21,7 +21,7 @@ def generate_trail_plots(
     trade_cap: pd.DataFrame,
     out_dir: Path,
     max_day: int,
-    benchmark_key: str = "trail_3",
+    benchmark_key: str = "trail_5",
     starting_capital_usd: float = 1000.0,
 ) -> None:
     out_dir = Path(out_dir)
@@ -124,15 +124,28 @@ def _plot_profit_factor(legs: pd.DataFrame, out_dir: Path) -> None:
 
 def _plot_avg_pnl(legs: pd.DataFrame, out_dir: Path) -> None:
     avgs = []
+    meds = []
     for sk in TRAIL_STRATEGY_KEYS:
         g = legs[legs["strategy_key"] == sk]
-        avgs.append(100 * pd.to_numeric(g.get("pnl_pct"), errors="coerce").mean() if len(g) else 0)
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.bar(list(TRAIL_STRATEGY_KEYS), avgs, color="seagreen")
+        s = 100 * pd.to_numeric(g.get("pnl_pct"), errors="coerce")
+        avgs.append(float(s.mean()) if len(g) else 0)
+        meds.append(float(s.median()) if len(g) else 0)
+    labels = list(TRAIL_STRATEGY_KEYS)
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.bar(labels, avgs, color="seagreen")
     ax.set_ylabel("Avg P/L per trade (%)")
     ax.set_title("Average P/L per trade")
+    ax.tick_params(axis="x", rotation=45)
     fig.tight_layout()
     fig.savefig(out_dir / "avg_pnl_per_trade_all.png", dpi=120)
+    plt.close(fig)
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.bar(labels, meds, color="teal")
+    ax.set_ylabel("Median P/L per trade (%)")
+    ax.set_title("Median P/L per trade")
+    ax.tick_params(axis="x", rotation=45)
+    fig.tight_layout()
+    fig.savefig(out_dir / "median_pnl_per_trade_all.png", dpi=120)
     plt.close(fig)
 
 
@@ -158,12 +171,22 @@ def _plot_trade_count(legs: pd.DataFrame, out_dir: Path, max_day: int) -> None:
 def _plot_exit_distribution(legs: pd.DataFrame, out_dir: Path) -> None:
     if "exit_reason" not in legs.columns:
         return
-    fig, axes = plt.subplots(2, 5, figsize=(16, 7))
+    n = len(TRAIL_STRATEGY_KEYS)
+    ncols = 5
+    nrows = (n + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(16, 3.2 * nrows))
+    axes_flat = axes.flatten() if hasattr(axes, "flatten") else [axes]
     for i, sk in enumerate(TRAIL_STRATEGY_KEYS):
-        ax = axes[i // 5][i % 5]
+        ax = axes_flat[i]
         g = legs[legs["strategy_key"] == sk]["exit_reason"].value_counts()
+        if len(g) == 0:
+            ax.set_title(sk, fontsize=9)
+            ax.axis("off")
+            continue
         ax.pie(g.values, labels=g.index, autopct="%1.0f%%", textprops={"fontsize": 6})
         ax.set_title(sk, fontsize=9)
+    for j in range(n, len(axes_flat)):
+        axes_flat[j].axis("off")
     fig.suptitle("Exit distribution (SL vs trailing)")
     fig.tight_layout()
     fig.savefig(out_dir / "exit_distribution.png", dpi=120)
@@ -224,6 +247,11 @@ def _plot_regime_heatmaps(legs: pd.DataFrame, out_dir: Path, capital: float) -> 
     legs["_pnl"] = pnl
     legs["_win"] = pd.to_numeric(legs["pnl_pct"], errors="coerce") > 0
 
+    def _pf(g: pd.DataFrame) -> float:
+        gp = g.loc[g["_pnl"] > 0, "_pnl"].sum()
+        gl = abs(g.loc[g["_pnl"] < 0, "_pnl"].sum())
+        return float(gp / gl) if gl > 1e-9 else float("nan")
+
     def _matrix(col: str) -> np.ndarray:
         mat = np.zeros((len(TRAIL_STRATEGY_KEYS), len(regimes)))
         for i, sk in enumerate(TRAIL_STRATEGY_KEYS):
@@ -233,6 +261,10 @@ def _plot_regime_heatmaps(legs: pd.DataFrame, out_dir: Path, capital: float) -> 
                     mat[i, j] = 100 * g["_pnl"].sum() / capital if len(g) else np.nan
                 elif col == "wr":
                     mat[i, j] = 100 * g["_win"].mean() if len(g) else np.nan
+                elif col == "pf":
+                    mat[i, j] = _pf(g) if len(g) else np.nan
+                elif col == "avg":
+                    mat[i, j] = 100 * pd.to_numeric(g["pnl_pct"], errors="coerce").mean() if len(g) else np.nan
                 else:
                     mat[i, j] = len(g)
         return mat
@@ -240,10 +272,12 @@ def _plot_regime_heatmaps(legs: pd.DataFrame, out_dir: Path, capital: float) -> 
     for name, col, title in (
         ("strategy_regime_return_heatmap", "ret", "Return (%)"),
         ("strategy_regime_winrate_heatmap", "wr", "Win rate (%)"),
+        ("strategy_regime_pf_heatmap", "pf", "Profit factor"),
+        ("strategy_regime_avg_pnl_heatmap", "avg", "Avg P/L (%)"),
         ("strategy_regime_count_heatmap", "n", "Trade count"),
     ):
         mat = _matrix(col)
-        fig, ax = plt.subplots(figsize=(8, 10))
+        fig, ax = plt.subplots(figsize=(9, 11))
         im = ax.imshow(mat, aspect="auto", cmap="RdYlGn" if col != "n" else "Blues")
         ax.set_xticks(range(len(regimes)))
         ax.set_xticklabels(regimes, rotation=45, ha="right")
@@ -254,6 +288,18 @@ def _plot_regime_heatmaps(legs: pd.DataFrame, out_dir: Path, capital: float) -> 
         fig.tight_layout()
         fig.savefig(out_dir / f"{name}.png", dpi=120)
         plt.close(fig)
+
+    # CSV table: strategy × regime return (%) + overall
+    rows = []
+    for sk in TRAIL_STRATEGY_KEYS:
+        row = {"strategy": sk}
+        for reg in regimes:
+            g = legs[(legs["strategy_key"] == sk) & (legs["regime"] == reg)]
+            row[reg] = round(100 * g["_pnl"].sum() / capital, 2) if len(g) else None
+        g_all = legs[legs["strategy_key"] == sk]
+        row["Overall"] = round(100 * g_all["_pnl"].sum() / capital, 2) if len(g_all) else None
+        rows.append(row)
+    pd.DataFrame(rows).to_csv(out_dir / "regime_performance_table.csv", index=False)
 
 
 def _plot_ranking_over_time(daily_cap: pd.DataFrame, out_dir: Path, max_day: int) -> None:

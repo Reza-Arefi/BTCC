@@ -1,13 +1,14 @@
 # Trailing-exit geometry experiment — historical only, no live bot handoff.
-# Entry frozen: 0.65 <= S < 0.85, static weights, no exhaustion rejection.
+# Entry frozen: 0.55 <= S < 0.85, static weights, no exhaustion rejection.
+# Strategies: T1–T14 pure trailing (T5 = S3 benchmark).
 
 trail_experiment:
   enabled: true
-  version: "trail_exit_v1"
+  version: "trail_exit_v2"
   experiment_id_prefix: "trail_compare_365d"
 
-  # Entry band (inclusive lower, exclusive upper)
-  long_threshold: 0.65
+  # Entry band (inclusive lower, exclusive upper): [0.55, 0.85)
+  long_threshold: 0.55
   upper_threshold: 0.85
 
   # Static weights only — no daily adaptation
@@ -24,7 +25,8 @@ trail_experiment:
   one_opportunity_per_pair: true
   total_days: 365
 
-  benchmark_strategy_key: trail_3
+  # T5 = previous S3 geometry (SL -1%, act +1%, trail 0.50%)
+  benchmark_strategy_key: trail_5
 
   btc_d_health:
     require_for_new_trades: false
@@ -42,68 +44,96 @@ trail_experiment:
         activation_pct: 0.0075
         distance_pct: 0.0025
     trail_2:
-      name: "T2_sl1p00_act1p00_dist0p25"
+      name: "T2_sl0p75_act0p75_dist0p50"
+      stop_loss_pct: 0.0075
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0075
+        distance_pct: 0.0050
+    trail_3:
+      name: "T3_sl0p75_act0p75_dist0p75"
+      stop_loss_pct: 0.0075
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0075
+        distance_pct: 0.0075
+    trail_4:
+      name: "T4_sl1p00_act1p00_dist0p25"
       stop_loss_pct: 0.0100
       take_profit_pct: null
       trailing:
         activation_pct: 0.0100
         distance_pct: 0.0025
-    trail_3:
-      name: "T3_benchmark_sl1p00_act1p00_dist0p50"
+    trail_5:
+      name: "T5_benchmark_sl1p00_act1p00_dist0p50"
       stop_loss_pct: 0.0100
       take_profit_pct: null
       trailing:
         activation_pct: 0.0100
         distance_pct: 0.0050
-    trail_4:
-      name: "T4_sl1p50_act1p00_dist0p50"
+    trail_6:
+      name: "T6_sl1p00_act1p00_dist1p00"
+      stop_loss_pct: 0.0100
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0100
+        distance_pct: 0.0100
+    trail_7:
+      name: "T7_sl1p50_act1p00_dist0p50"
       stop_loss_pct: 0.0150
       take_profit_pct: null
       trailing:
         activation_pct: 0.0100
         distance_pct: 0.0050
-    trail_5:
-      name: "T5_sl1p50_act1p50_dist0p50"
+    trail_8:
+      name: "T8_sl1p50_act1p00_dist1p00"
+      stop_loss_pct: 0.0150
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0100
+        distance_pct: 0.0100
+    trail_9:
+      name: "T9_sl1p50_act1p50_dist0p50"
       stop_loss_pct: 0.0150
       take_profit_pct: null
       trailing:
         activation_pct: 0.0150
         distance_pct: 0.0050
-    trail_6:
-      name: "T6_sl2p00_act1p50_dist0p75"
-      stop_loss_pct: 0.0200
+    trail_10:
+      name: "T10_sl1p50_act1p50_dist1p00"
+      stop_loss_pct: 0.0150
       take_profit_pct: null
       trailing:
         activation_pct: 0.0150
-        distance_pct: 0.0075
-    trail_7:
-      name: "T7_sl2p00_act2p00_dist0p75"
+        distance_pct: 0.0100
+    trail_11:
+      name: "T11_sl1p50_act1p50_dist1p50"
+      stop_loss_pct: 0.0150
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0150
+        distance_pct: 0.0150
+    trail_12:
+      name: "T12_sl2p00_act2p00_dist0p50"
       stop_loss_pct: 0.0200
       take_profit_pct: null
       trailing:
         activation_pct: 0.0200
-        distance_pct: 0.0075
-    trail_8:
-      name: "T8_sl2p50_act2p00_dist1p00"
-      stop_loss_pct: 0.0250
+        distance_pct: 0.0050
+    trail_13:
+      name: "T13_sl2p00_act2p00_dist1p00"
+      stop_loss_pct: 0.0200
       take_profit_pct: null
       trailing:
         activation_pct: 0.0200
         distance_pct: 0.0100
-    trail_9:
-      name: "T9_sl3p00_act3p00_dist1p00"
-      stop_loss_pct: 0.0300
+    trail_14:
+      name: "T14_sl2p00_act2p00_dist2p00"
+      stop_loss_pct: 0.0200
       take_profit_pct: null
       trailing:
-        activation_pct: 0.0300
-        distance_pct: 0.0100
-    trail_10:
-      name: "T10_sl3p00_act3p00_dist1p50"
-      stop_loss_pct: 0.0300
-      take_profit_pct: null
-      trailing:
-        activation_pct: 0.0300
-        distance_pct: 0.0150
+        activation_pct: 0.0200
+        distance_pct: 0.0200
 
   regime:
     classes:
@@ -117,6 +147,7 @@ trail_experiment:
       range_adx: 20.0
       low_trend_adx: 30.0
       normal_trend_adx: 40.0
+    # Diagnostic only — never selects strategy during the run
 
   analytics:
     day_axis: true
@@ -127,6 +158,7 @@ trail_experiment:
       - win_rate_all
       - profit_factor_all
       - avg_pnl_per_trade_all
+      - median_pnl_per_trade_all
       - trade_count_over_time
       - exit_distribution
       - trail_activation_rate
@@ -136,6 +168,8 @@ trail_experiment:
       - avg_pnl_vs_mfe
       - strategy_regime_return_heatmap
       - strategy_regime_winrate_heatmap
+      - strategy_regime_pf_heatmap
       - strategy_regime_count_heatmap
       - strategy_ranking_over_time
       - cumulative_return_benchmark_highlight
+      - regime_performance_table

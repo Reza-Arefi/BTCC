@@ -1,0 +1,11 @@
+{
+  "experiment_id": "trail_compare_365d_S0.65_0.85_20260901_005916",
+  "status": "FROZEN",
+  "frozen_at_utc": "2026-09-01T02:41:00+00:00",
+  "stopped_at_checkpoint_day": 90,
+  "entry_band": [0.65, 0.85],
+  "strategies": "T1-T10",
+  "benchmark": "trail_3",
+  "git_sha_at_launch": "3f948d75c8ccaaa1f9e41c83f659892e200b9ba8",
+  "on_disk": "results/trail_compare_365d_S0.65_0.85_20260901_005916"
+}

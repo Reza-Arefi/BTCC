@@ -61,6 +61,11 @@ def load_trail_experiment_config(path: Path | None = None) -> dict[str, Any]:
     bd = merged.get("btc_d_health") or {}
     bd["require_for_new_trades"] = False
     merged["btc_d_health"] = bd
+    btc_d = dict(merged.get("btc_d") or {})
+    exp_btc = te.get("btc_d") or {}
+    if "enabled" in exp_btc:
+        btc_d["enabled"] = bool(exp_btc["enabled"])
+    merged["btc_d"] = btc_d
     merged["trail_experiment"] = te
     merged["_trail_config_path"] = str(p)
     return merged

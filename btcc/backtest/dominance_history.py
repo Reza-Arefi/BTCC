@@ -21,6 +21,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import requests
@@ -31,6 +32,30 @@ logger = logging.getLogger(__name__)
 
 # Back-compat alias — single source of truth is relative_btc_d.TOP_COIN_IDS
 _TOP_COIN_IDS = TOP_COIN_IDS
+
+
+def btc_d_backtest_enabled(sim_cfg: dict | None) -> bool:
+    """True when backtests should fetch BTC.D; experiments set btc_d.enabled: false."""
+    if not sim_cfg:
+        return True
+    btc_d = sim_cfg.get("btc_d") or {}
+    return bool(btc_d.get("enabled", True))
+
+
+def btc_d_manifest_fields(sim_cfg: dict | None, dom_series: "HistoricalDominanceSeries | None") -> dict[str, Any]:
+    """Standard BTC.D metadata for experiment manifests."""
+    meta = (dom_series.meta if dom_series is not None else {}) or {}
+    if not btc_d_backtest_enabled(sim_cfg) or meta.get("source") == "disabled":
+        return {
+            "btc_d_enabled": False,
+            "btc_d_source": "disabled",
+            "btc_d_affects_trading": False,
+        }
+    return {
+        "btc_d_enabled": True,
+        "btc_d_source": str(meta.get("source", "unknown")),
+        "btc_d_affects_trading": False,
+    }
 
 
 class HistoricalDominanceSeries:
@@ -272,6 +297,35 @@ class HistoricalDominanceSeries:
         return out.reset_index(drop=True), meta
 
     @classmethod
+    def disabled(cls) -> "HistoricalDominanceSeries":
+        """No network fetch — BTC.D intentionally off for backtests (re-enable via config)."""
+        return cls(
+            pd.DataFrame(columns=["timestamp", "btc_dominance_pct"]),
+            {
+                "status": "DISABLED",
+                "source": "disabled",
+                "enabled": False,
+                "btc_d_affects_trading": False,
+                "n_points": 0,
+            },
+        )
+
+    @classmethod
+    def fetch_for_backtest(
+        cls,
+        days: int,
+        cache_dir: str | Path,
+        *,
+        sim_cfg: dict | None = None,
+        force: bool = False,
+    ) -> "HistoricalDominanceSeries":
+        """Fetch historical BTC.D unless disabled in sim_cfg['btc_d']['enabled']."""
+        if not btc_d_backtest_enabled(sim_cfg):
+            logger.info("BTC.D disabled for backtest — skipping CoinGecko fetch (days=%s)", days)
+            return cls.disabled()
+        return cls.fetch_coingecko(days, cache_dir, force=force)
+
+    @classmethod
     def fetch_coingecko(
         cls, days: int, cache_dir: str | Path, force: bool = False
     ) -> "HistoricalDominanceSeries":
@@ -350,6 +404,8 @@ class HistoricalDominanceSeries:
 
         Never uses future observations. Never interpolates.
         """
+        if self.meta.get("source") == "disabled" or self.meta.get("status") == "DISABLED":
+            return None, None, "DISABLED"
         if self.df.empty:
             return None, None, "INSUFFICIENT_DATA"
         t = pd.Timestamp(ts)

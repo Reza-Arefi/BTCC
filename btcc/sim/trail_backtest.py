@@ -85,9 +85,10 @@ def run_trail_experiment_backtest(
     eval_end = _utc(panels["window"]["eval_end"])
     btc_close = btc_df.set_index("timestamp")["close"]
 
-    dom_series = HistoricalDominanceSeries.fetch_coingecko(
+    dom_series = HistoricalDominanceSeries.fetch_for_backtest(
         days=int(days),
         cache_dir=bt_cfg["backtest_data"]["dominance_cache"],
+        sim_cfg=sim,
         force=force_download,
     )
 

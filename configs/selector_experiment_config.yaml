@@ -24,6 +24,9 @@ selector_experiment:
   btc_d_health:
     require_for_new_trades: false
 
+  btc_d:
+    enabled: false
+
   telegram: OFF
   allow_trading: false
   auto_live_handoff: false

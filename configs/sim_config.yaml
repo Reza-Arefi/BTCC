@@ -90,7 +90,10 @@ sim:
 
   # BTC.D: prefer absolute Pro chart or local CSV; else RELATIVE top-N share
   # with NO present-day /global calibration (look-ahead free).
+  # Set enabled: false in experiment configs to skip CoinGecko during backtests
+  # (btc_regime weight is 0 — no effect on S, entry, selector, exit, or regime).
   btc_d:
+    enabled: true
     mode: relative_top_n_no_present_day_scale
     allow_present_day_calibration: false
     exclude_if_unavailable: false

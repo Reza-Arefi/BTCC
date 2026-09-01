@@ -16,7 +16,7 @@ import pandas as pd
 
 from btcc.backtest.config import load_backtest_config
 from btcc.backtest.data_loader import download_panels
-from btcc.backtest.dominance_history import HistoricalDominanceSeries
+from btcc.backtest.dominance_history import HistoricalDominanceSeries, btc_d_manifest_fields
 from btcc.backtest.predict import predict_coin_at_bar
 from btcc.sim.accounting import CostModel, close_long_alt_btc
 from btcc.sim.checkpoint import verify_final_checkpoint, write_daily_checkpoint, write_final_checkpoint
@@ -209,9 +209,10 @@ def run_selector_experiment_backtest(
     eval_end = _utc(panels["window"]["eval_end"])
     btc_close = btc_df.set_index("timestamp")["close"]
 
-    dom_series = HistoricalDominanceSeries.fetch_coingecko(
+    dom_series = HistoricalDominanceSeries.fetch_for_backtest(
         days=int(days),
         cache_dir=bt_cfg["backtest_data"]["dominance_cache"],
+        sim_cfg=sim,
         force=force_download,
     )
 
@@ -652,6 +653,7 @@ def run_selector_experiment_backtest(
         "starting_capital_usd": float(sim.get("starting_capital_usd", 1000.0)),
         "notional_usd": float(sim.get("notional_usd", 100.0)),
         "fees": {"fee_rate_per_side": sim.get("fee_rate_per_side"), "slippage_rate_per_side": sim.get("slippage_rate_per_side")},
+        **btc_d_manifest_fields(sim, dom_series),
     }
     (out_dir / "experiment_manifest.json").write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
 

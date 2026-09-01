@@ -361,6 +361,16 @@ def write_daily_checkpoint(
                     starting_capital_usd=starting_capital_usd,
                     analytics_root=out_dir / "analytics",
                 )
+            elif str(weight_mode).startswith("selector_memory"):
+                from btcc.analytics.selector_memory_pipeline import build_memory_analytics_asof
+
+                build_memory_analytics_asof(
+                    out_dir,
+                    day_number=day_number,
+                    eval_start=eval_start,
+                    starting_capital_usd=starting_capital_usd,
+                    analytics_root=out_dir / "analytics",
+                )
             elif str(weight_mode).startswith("selector"):
                 from btcc.analytics.selector_pipeline import build_selector_analytics_asof
 
@@ -387,6 +397,8 @@ def write_daily_checkpoint(
             # Snapshot as-of plots into the day folder (append-only history).
             if str(weight_mode).startswith("trail"):
                 plot_sub = "trail"
+            elif str(weight_mode).startswith("selector_memory"):
+                plot_sub = "memory"
             elif str(weight_mode).startswith("selector"):
                 plot_sub = "selector"
             else:

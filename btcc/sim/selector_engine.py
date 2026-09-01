@@ -46,7 +46,14 @@ class CounterfactualHistory:
             )
         )
 
-    def prior(self, strategy_key: str, asof: pd.Timestamp, *, regime: str | None = None) -> list[ClosedCounterfactual]:
+    def prior(
+        self,
+        strategy_key: str,
+        asof: pd.Timestamp,
+        *,
+        regime: str | None = None,
+        lookback_days: float | None = None,
+    ) -> list[ClosedCounterfactual]:
         asof = pd.Timestamp(asof)
         if asof.tzinfo is None:
             asof = asof.tz_localize("UTC")
@@ -56,6 +63,9 @@ class CounterfactualHistory:
             t for t in self.trades
             if t.strategy_key == strategy_key and t.exit_ts < asof and (regime is None or t.regime == regime)
         ]
+        if lookback_days is not None and lookback_days > 0:
+            cutoff = asof - pd.Timedelta(days=float(lookback_days))
+            out = [t for t in out if t.exit_ts >= cutoff]
         return out
 
     def to_dict(self) -> dict[str, Any]:
@@ -101,8 +111,14 @@ def _ewma(values: list[tuple[pd.Timestamp, float]], asof: pd.Timestamp, half_lif
     return num / den if den > 1e-12 else 0.0
 
 
-def _strategy_returns(history: CounterfactualHistory, strategy_key: str, asof: pd.Timestamp) -> list[tuple[pd.Timestamp, float]]:
-    return [(t.exit_ts, t.pnl_pct) for t in history.prior(strategy_key, asof)]
+def _strategy_returns(
+    history: CounterfactualHistory,
+    strategy_key: str,
+    asof: pd.Timestamp,
+    *,
+    lookback_days: float | None = None,
+) -> list[tuple[pd.Timestamp, float]]:
+    return [(t.exit_ts, t.pnl_pct) for t in history.prior(strategy_key, asof, lookback_days=lookback_days)]
 
 
 def _scores_ewma(
@@ -158,26 +174,41 @@ def _scores_regime(
     return out
 
 
-def _scores_rank_ewma(history: CounterfactualHistory, asof: pd.Timestamp, half_life_days: float) -> dict[str, float]:
+def _scores_rank_ewma(
+    history: CounterfactualHistory,
+    asof: pd.Timestamp,
+    half_life_days: float,
+    *,
+    lookback_days: float | None = None,
+    strategy_keys: tuple[str, ...] | None = None,
+) -> dict[str, float]:
     """Lower score is better (EWMA of rank). Invert for argmax selection."""
+    keys = strategy_keys or FIXED_STRATEGY_KEYS
     hl = half_life_days * 86400.0
-    # Collect unique exit times from any strategy
+    asof = pd.Timestamp(asof)
+    if asof.tzinfo is None:
+        asof = asof.tz_localize("UTC")
+    else:
+        asof = asof.tz_convert("UTC")
+    cutoff = asof - pd.Timedelta(days=float(lookback_days)) if lookback_days else None
     events: dict[pd.Timestamp, dict[str, float]] = {}
     for t in history.trades:
         if t.exit_ts >= asof:
             continue
+        if cutoff is not None and t.exit_ts < cutoff:
+            continue
         events.setdefault(t.exit_ts, {})[t.strategy_key] = t.pnl_pct
-    rank_samples: dict[str, list[tuple[pd.Timestamp, float]]] = {k: [] for k in FIXED_STRATEGY_KEYS}
+    rank_samples: dict[str, list[tuple[pd.Timestamp, float]]] = {k: [] for k in keys}
     for ts in sorted(events.keys()):
-        rets = {k: events[ts].get(k) for k in FIXED_STRATEGY_KEYS if k in events[ts]}
+        rets = {k: events[ts].get(k) for k in keys if k in events[ts]}
         if not rets:
             continue
         ordered = sorted(rets.items(), key=lambda x: x[1], reverse=True)
         rank_map = {k: i + 1 for i, (k, _) in enumerate(ordered)}
         for k in rank_map:
-            rank_samples[k].append((ts, float(rank_map[k])))
-    # Convert to "higher is better" = negative rank EWMA
-    return {k: -_ewma(rank_samples[k], asof, hl) for k in FIXED_STRATEGY_KEYS}
+            if k in rank_samples:
+                rank_samples[k].append((ts, float(rank_map[k])))
+    return {k: -_ewma(rank_samples[k], asof, hl) for k in keys}
 
 
 def _scores_downside_aware(
@@ -217,14 +248,18 @@ class SelectorState:
     time_on_strategy_seconds: dict[str, float] = field(default_factory=dict)
     min_duration_hours: float = 6.0
     switch_margin: float = 0.0005
+    lookback_days: float | None = None  # available history window (distinct from EWMA half-life)
 
     def compute_scores(
         self,
         history: CounterfactualHistory,
         asof: pd.Timestamp,
         regime: str | None,
+        strategy_keys: tuple[str, ...] | None = None,
     ) -> dict[str, float]:
         se = self.cfg
+        lb = self.lookback_days
+        keys = strategy_keys
         if self.kind == "ewma_7d":
             return _scores_ewma(history, asof, float(se.get("half_life_days", 7)))
         if self.kind == "multi_horizon_ewma":
@@ -249,7 +284,10 @@ class SelectorState:
             wg = float(se.get("regime_weight", 0.35))
             return {k: wr * recent[k] + wg * regime_s[k] for k in FIXED_STRATEGY_KEYS}
         if self.kind == "rank_ewma":
-            return _scores_rank_ewma(history, asof, float(se.get("half_life_days", 7)))
+            return _scores_rank_ewma(
+                history, asof, float(se.get("half_life_days", 7)),
+                lookback_days=lb, strategy_keys=keys,
+            )
         if self.kind == "downside_aware":
             return _scores_downside_aware(
                 history, asof,
@@ -265,7 +303,7 @@ class SelectorState:
         regime: str | None,
         strategy_keys: tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
-        scores = self.compute_scores(history, asof, regime)
+        scores = self.compute_scores(history, asof, regime, strategy_keys=strategy_keys)
         if strategy_keys:
             scores = {k: scores.get(k, 0.0) for k in strategy_keys}
         candidate_k, candidate_v, second_k, second_v = _pick_best(scores)
@@ -328,6 +366,7 @@ class SelectorState:
             "time_on_strategy_seconds": dict(self.time_on_strategy_seconds),
             "min_duration_hours": self.min_duration_hours,
             "switch_margin": self.switch_margin,
+            "lookback_days": self.lookback_days,
         }
 
     @classmethod
@@ -348,8 +387,30 @@ class SelectorState:
             time_on_strategy_seconds=dict(raw.get("time_on_strategy_seconds") or {}),
             min_duration_hours=float(raw.get("min_duration_hours", 6)),
             switch_margin=float(raw.get("switch_margin", 0.0005)),
+            lookback_days=float(raw["lookback_days"]) if raw.get("lookback_days") is not None else None,
         )
         return st
+
+
+def build_selector_memory_group(lookbacks: dict[str, int], *, switching: dict[str, Any] | None = None) -> dict[str, SelectorState]:
+    """Build E-10..E-365 rank_ewma selectors differing only by lookback_days."""
+    sw = switching or {}
+    min_h = float(sw.get("minimum_selection_duration_hours", 6))
+    margin = float(sw.get("switch_margin", 0.0005))
+    cfg = {"kind": "rank_ewma", "half_life_days": 7}
+    out: dict[str, SelectorState] = {}
+    for label, days in lookbacks.items():
+        sid = f"selector_{label.lower().replace('-', '_')}"
+        out[sid] = SelectorState(
+            selector_id=sid,
+            arm_label=label,
+            kind="rank_ewma",
+            cfg=dict(cfg),
+            min_duration_hours=min_h,
+            switch_margin=margin,
+            lookback_days=float(days),
+        )
+    return out
 
 
 def build_selector_group(sim: dict[str, Any]) -> dict[str, SelectorState]:

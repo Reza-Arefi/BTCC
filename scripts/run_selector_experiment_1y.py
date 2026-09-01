@@ -77,7 +77,24 @@ def main() -> int:
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     logger.info("Launch meta → %s sha=%s", meta_path, git_sha)
 
-    out_dir = run_selector_experiment_backtest(days=365, force_download=False, sim_cfg=sim)
+    out_dir_env = os.environ.get("BTCC_SELECTOR_OUT_DIR")
+    if out_dir_env:
+        out_path = Path(out_dir_env)
+        if not out_path.is_absolute():
+            out_path = ROOT / out_path
+        meta["resume"] = True
+        meta["output_directory"] = str(out_path)
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        logger.info("Resuming selector experiment → %s", out_path)
+        out_dir = run_selector_experiment_backtest(
+            days=365,
+            force_download=False,
+            sim_cfg=sim,
+            out_dir=out_path,
+            resume=True,
+        )
+    else:
+        out_dir = run_selector_experiment_backtest(days=365, force_download=False, sim_cfg=sim)
     meta["output_directory"] = str(out_dir)
     meta["status"] = "COMPLETED"
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")

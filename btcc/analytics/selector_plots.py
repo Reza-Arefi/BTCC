@@ -13,6 +13,121 @@ import pandas as pd
 
 from btcc.sim.selector_config import ALL_ARM_LABELS, FIXED_ARM_LABELS, SELECTOR_ARM_LABELS
 
+# 18 distinct styles: numbered 1–18 (T1…T12, then A…F).
+_ARM_COLORS = plt.cm.tab20(np.linspace(0, 0.95, len(ALL_ARM_LABELS)))
+_ARM_MARKERS = ("o", "s", "^", "v", "D", "p", "*", "h", "X", "P", "d", "8", "+", "x", "1", "2", "3", "4")
+_ARM_LINESTYLES = (
+    "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-",
+    (0, (5, 2)), (0, (5, 2)), (0, (5, 2)), (0, (5, 2)), (0, (5, 2)), (0, (5, 2)),
+)
+
+
+def _arm_line_number(arm: str) -> int:
+    return ALL_ARM_LABELS.index(arm) + 1
+
+
+def _style_for_arm(arm: str) -> dict[str, object]:
+    i = ALL_ARM_LABELS.index(arm)
+    is_selector = arm in SELECTOR_ARM_LABELS
+    return {
+        "color": _ARM_COLORS[i],
+        "linestyle": _ARM_LINESTYLES[i],
+        "marker": _ARM_MARKERS[i],
+        "linewidth": 2.2 if is_selector else 1.6,
+        "alpha": 1.0,
+        "zorder": 3 if is_selector else 2,
+    }
+
+
+def _markevery(max_day: int) -> int:
+    return max(1, max_day // 12)
+
+
+def _right_label_x(max_day: int) -> float:
+    """X position for end-of-line labels, just outside the day axis."""
+    return max_day + max(2.0, max_day * 0.04)
+
+
+def _add_right_arm_labels(
+    ax,
+    endpoints: list[tuple[str, float, float]],
+    *,
+    max_day: int,
+) -> None:
+    """Place numbered arm labels (e.g. '3 T3') to the right of the plot area."""
+    label_x = _right_label_x(max_day)
+    # Sort by y so labels don't overlap as badly; stagger slightly if needed.
+    endpoints_sorted = sorted(endpoints, key=lambda e: e[2])
+    n = len(endpoints_sorted)
+    min_gap = 0.0
+    if n > 1:
+        ys = [e[2] for e in endpoints_sorted]
+        span = max(abs(max(ys) - min(ys)), 1e-6)
+        min_gap = span * 0.025
+    adjusted_y: list[float] = []
+    prev = -1e18
+    for _, _, y in endpoints_sorted:
+        y_adj = max(y, prev + min_gap)
+        adjusted_y.append(y_adj)
+        prev = y_adj
+    y_map = {arm: y_adj for (arm, _, _), y_adj in zip(endpoints_sorted, adjusted_y)}
+    for arm, _x_last, y_last in endpoints:
+        st = _style_for_arm(arm)
+        num = _arm_line_number(arm)
+        ax.text(
+            label_x,
+            y_map.get(arm, y_last),
+            f"{num} {arm}",
+            fontsize=8,
+            fontweight="bold" if arm in SELECTOR_ARM_LABELS else "normal",
+            color=st["color"],
+            va="center",
+            ha="left",
+            clip_on=False,
+        )
+
+
+def _plot_multi_arm_timeseries(
+    ax,
+    daily_cap: pd.DataFrame,
+    *,
+    max_day: int,
+    y_fn,
+    title: str,
+    ylabel: str,
+) -> None:
+    """Draw all 18 arms with distinct shape/color and numbered right-side labels."""
+    endpoints: list[tuple[str, float, float]] = []
+    me = _markevery(max_day)
+    x_right = _right_label_x(max_day)
+    ax.set_xlim(1, x_right)
+    for arm in ALL_ARM_LABELS:
+        g = daily_cap[daily_cap["strategy_key"] == arm].sort_values("day_number")
+        if g.empty:
+            continue
+        st = _style_for_arm(arm)
+        y = y_fn(g)
+        x = g["day_number"].astype(float)
+        ax.plot(
+            x,
+            y,
+            color=st["color"],
+            linestyle=st["linestyle"],
+            marker=st["marker"],
+            markevery=me,
+            markersize=5 if arm in SELECTOR_ARM_LABELS else 4,
+            linewidth=st["linewidth"],
+            alpha=st["alpha"],
+            zorder=st["zorder"],
+        )
+        endpoints.append((arm, float(x.iloc[-1]), float(y.iloc[-1])))
+    ax.set_xlabel("Day")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3)
+    if endpoints:
+        _add_right_arm_labels(ax, endpoints, max_day=max_day)
+
 
 def generate_selector_plots(
     legs: pd.DataFrame,
@@ -56,46 +171,40 @@ def generate_selector_plots(
 def _plot_cumulative_return(daily_cap: pd.DataFrame, out_dir: Path, max_day: int) -> None:
     if daily_cap.empty:
         return
-    fig, ax = plt.subplots(figsize=(14, 7))
-    for arm in ALL_ARM_LABELS:
-        g = daily_cap[daily_cap["strategy_key"] == arm]
-        if g.empty:
-            continue
-        ls = "-" if arm in FIXED_ARM_LABELS else "--"
-        lw = 1.2 if arm in SELECTOR_ARM_LABELS else 0.9
-        ax.plot(g["day_number"], g["cumulative_return_pct"], label=arm, linewidth=lw, linestyle=ls)
-    ax.set_xlabel("Day")
-    ax.set_ylabel("Cumulative return (%)")
-    ax.set_title("Cumulative return — T1–T12 + A–F")
-    ax.set_xlim(1, max_day)
-    ax.legend(fontsize=6, ncol=3, loc="upper left")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(out_dir / "cumulative_return_all.png", dpi=120)
+    fig, ax = plt.subplots(figsize=(15, 8))
+    fig.subplots_adjust(right=0.88)
+    _plot_multi_arm_timeseries(
+        ax,
+        daily_cap,
+        max_day=max_day,
+        y_fn=lambda g: g["cumulative_return_pct"].astype(float),
+        title="Cumulative return — T1–T12 + A–F",
+        ylabel="Cumulative return (%)",
+    )
+    fig.savefig(out_dir / "cumulative_return_all.png", dpi=120, bbox_inches="tight")
     plt.close(fig)
 
 
 def _plot_drawdown(daily_cap: pd.DataFrame, out_dir: Path, max_day: int) -> None:
     if daily_cap.empty:
         return
-    fig, ax = plt.subplots(figsize=(14, 7))
-    for arm in ALL_ARM_LABELS:
-        g = daily_cap[daily_cap["strategy_key"] == arm].sort_values("day_number")
-        if g.empty:
-            continue
+    fig, ax = plt.subplots(figsize=(15, 8))
+    fig.subplots_adjust(right=0.88)
+
+    def _dd(g: pd.DataFrame) -> pd.Series:
         eq = g["ending_value"].astype(float)
         peak = eq.cummax()
-        dd = 100 * (eq / peak - 1.0)
-        ls = "-" if arm in FIXED_ARM_LABELS else "--"
-        ax.plot(g["day_number"], dd, label=arm, linewidth=0.9, linestyle=ls)
-    ax.set_xlabel("Day")
-    ax.set_ylabel("Drawdown (%)")
-    ax.set_title("Drawdown (%)")
-    ax.set_xlim(1, max_day)
-    ax.legend(fontsize=6, ncol=3)
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(out_dir / "drawdown_all.png", dpi=120)
+        return 100 * (eq / peak - 1.0)
+
+    _plot_multi_arm_timeseries(
+        ax,
+        daily_cap,
+        max_day=max_day,
+        y_fn=_dd,
+        title="Drawdown (%)",
+        ylabel="Drawdown (%)",
+    )
+    fig.savefig(out_dir / "drawdown_all.png", dpi=120, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -280,19 +389,17 @@ def _plot_s_band_heatmap(legs: pd.DataFrame, opps: pd.DataFrame | None, out_dir:
 def _plot_ranking_over_time(daily_cap: pd.DataFrame, out_dir: Path, max_day: int) -> None:
     if daily_cap.empty:
         return
-    fig, ax = plt.subplots(figsize=(12, 6))
-    for arm in ALL_ARM_LABELS:
-        g = daily_cap[daily_cap["strategy_key"] == arm].sort_values("day_number")
-        if g.empty:
-            continue
-        ax.plot(g["day_number"], g["cumulative_return_pct"], label=arm, alpha=0.5, linewidth=0.8)
-    ax.set_xlabel("Day")
-    ax.set_ylabel("Cumulative return (%)")
-    ax.set_title("Strategy ranking proxy — cumulative return by arm")
-    ax.set_xlim(1, max_day)
-    ax.legend(fontsize=5, ncol=3)
-    fig.tight_layout()
-    fig.savefig(out_dir / "strategy_ranking_over_time.png", dpi=120)
+    fig, ax = plt.subplots(figsize=(15, 8))
+    fig.subplots_adjust(right=0.88)
+    _plot_multi_arm_timeseries(
+        ax,
+        daily_cap,
+        max_day=max_day,
+        y_fn=lambda g: g["cumulative_return_pct"].astype(float),
+        title="Strategy ranking proxy — cumulative return by arm",
+        ylabel="Cumulative return (%)",
+    )
+    fig.savefig(out_dir / "strategy_ranking_over_time.png", dpi=120, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -347,7 +454,6 @@ def _plot_selection_regret(regret: pd.DataFrame, out_dir: Path) -> None:
 def _plot_fixed_vs_selector(daily_cap: pd.DataFrame, out_dir: Path, max_day: int) -> None:
     if daily_cap.empty:
         return
-    fig, ax = plt.subplots(figsize=(12, 6))
     best_fixed = None
     best_fixed_ret = -1e9
     for arm in FIXED_ARM_LABELS:
@@ -355,19 +461,18 @@ def _plot_fixed_vs_selector(daily_cap: pd.DataFrame, out_dir: Path, max_day: int
         if g.empty:
             continue
         ret = float(g["cumulative_return_pct"].iloc[-1])
-        ax.plot(g["day_number"], g["cumulative_return_pct"], label=f"{arm}", alpha=0.4)
         if ret > best_fixed_ret:
             best_fixed_ret = ret
             best_fixed = arm
-    for arm in SELECTOR_ARM_LABELS:
-        g = daily_cap[daily_cap["strategy_key"] == arm]
-        if not g.empty:
-            ax.plot(g["day_number"], g["cumulative_return_pct"], label=f"{arm} *", linewidth=2.0)
-    ax.set_xlabel("Day")
-    ax.set_ylabel("Cumulative return (%)")
-    ax.set_title(f"Fixed vs dynamic (* selectors); best fixed ≈ {best_fixed}")
-    ax.set_xlim(1, max_day)
-    ax.legend(fontsize=6, ncol=3)
-    fig.tight_layout()
-    fig.savefig(out_dir / "fixed_vs_selector_comparison.png", dpi=120)
+    fig, ax = plt.subplots(figsize=(15, 8))
+    fig.subplots_adjust(right=0.88)
+    _plot_multi_arm_timeseries(
+        ax,
+        daily_cap,
+        max_day=max_day,
+        y_fn=lambda g: g["cumulative_return_pct"].astype(float),
+        title=f"Fixed vs dynamic selectors; best fixed ≈ {best_fixed}",
+        ylabel="Cumulative return (%)",
+    )
+    fig.savefig(out_dir / "fixed_vs_selector_comparison.png", dpi=120, bbox_inches="tight")
     plt.close(fig)

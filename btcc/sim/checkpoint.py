@@ -361,6 +361,16 @@ def write_daily_checkpoint(
                     starting_capital_usd=starting_capital_usd,
                     analytics_root=out_dir / "analytics",
                 )
+            elif str(weight_mode).startswith("selector"):
+                from btcc.analytics.selector_pipeline import build_selector_analytics_asof
+
+                build_selector_analytics_asof(
+                    out_dir,
+                    day_number=day_number,
+                    eval_start=eval_start,
+                    starting_capital_usd=starting_capital_usd,
+                    analytics_root=out_dir / "analytics",
+                )
             else:
                 from btcc.analytics.pipeline import build_arm_analytics_asof
 
@@ -375,7 +385,12 @@ def write_daily_checkpoint(
                     starting_capital_usd=starting_capital_usd,
                 )
             # Snapshot as-of plots into the day folder (append-only history).
-            plot_sub = "trail" if str(weight_mode).startswith("trail") else weight_mode
+            if str(weight_mode).startswith("trail"):
+                plot_sub = "trail"
+            elif str(weight_mode).startswith("selector"):
+                plot_sub = "selector"
+            else:
+                plot_sub = weight_mode
             src_plots = out_dir / "analytics" / "plots" / plot_sub
             if src_plots.exists():
                 dst_plots = ddir / "plots"

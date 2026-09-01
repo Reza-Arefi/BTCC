@@ -1,0 +1,146 @@
+# Dynamic trailing-selector experiment — 1-year historical only.
+# Fixed entry: S >= 0.60, static weights, no late-entry rejection.
+# Arms: T1–T12 (fixed) + A–F (dynamic selectors). 18 independent $1,000 accounts.
+
+selector_experiment:
+  enabled: true
+  version: "selector_experiment_v1"
+  experiment_id_prefix: "selector_compare_365d"
+
+  long_threshold: 0.60
+  upper_threshold: null
+  disable_late_entry_rejection: true
+
+  weight_mode: static
+  disable_weight_updates: true
+
+  starting_capital_usd: 1000.0
+  notional_usd: 100.0
+  compound_portfolio: true
+  max_open_opportunities: 10
+  one_opportunity_per_pair: true
+  total_days: 365
+
+  btc_d_health:
+    require_for_new_trades: false
+
+  telegram: OFF
+  allow_trading: false
+  auto_live_handoff: false
+
+  switching:
+    minimum_selection_duration_hours: 6
+    switch_margin: 0.0005
+
+  selectors:
+    A:
+      kind: ewma_7d
+      half_life_days: 7
+    B:
+      kind: multi_horizon_ewma
+      weights:
+        h4: 0.15
+        d1: 0.30
+        d7: 0.55
+      half_life_hours_4h: 4
+      half_life_days_1d: 1
+      half_life_days_7d: 7
+    C:
+      kind: regime_conditional
+      half_life_days: 7
+      min_regime_observations: 5
+    D:
+      kind: recent_plus_regime
+      recent_weight: 0.65
+      regime_weight: 0.35
+      half_life_days: 7
+      min_regime_observations: 5
+    E:
+      kind: rank_ewma
+      half_life_days: 7
+    F:
+      kind: downside_aware
+      half_life_days: 7
+      downside_lambda: 0.5
+
+  # T1–T8 unchanged from reordered trail v3 family; T9–T12 new.
+  strategies:
+    trail_1:
+      name: "T1_sl0p75_act0p75_dist0p25"
+      stop_loss_pct: 0.0075
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0075, distance_pct: 0.0025 }
+    trail_2:
+      name: "T2_sl1p00_act1p00_dist0p25"
+      stop_loss_pct: 0.0100
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0100, distance_pct: 0.0025 }
+    trail_3:
+      name: "T3_sl0p75_act0p75_dist0p50"
+      stop_loss_pct: 0.0075
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0075, distance_pct: 0.0050 }
+    trail_4:
+      name: "T4_sl1p00_act1p00_dist0p50"
+      stop_loss_pct: 0.0100
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0100, distance_pct: 0.0050 }
+    trail_5:
+      name: "T5_sl1p50_act1p00_dist0p50"
+      stop_loss_pct: 0.0150
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0100, distance_pct: 0.0050 }
+    trail_6:
+      name: "T6_sl1p50_act1p50_dist0p50"
+      stop_loss_pct: 0.0150
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0150, distance_pct: 0.0050 }
+    trail_7:
+      name: "T7_sl2p00_act2p00_dist0p50"
+      stop_loss_pct: 0.0200
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0200, distance_pct: 0.0050 }
+    trail_8:
+      name: "T8_sl0p75_act0p75_dist0p75"
+      stop_loss_pct: 0.0075
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0075, distance_pct: 0.0075 }
+    trail_9:
+      name: "T9_sl1p50_act1p50_dist0p25"
+      stop_loss_pct: 0.0150
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0150, distance_pct: 0.0025 }
+    trail_10:
+      name: "T10_sl2p00_act1p50_dist0p50"
+      stop_loss_pct: 0.0200
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0150, distance_pct: 0.0050 }
+    trail_11:
+      name: "T11_sl2p00_act2p00_dist1p50"
+      stop_loss_pct: 0.0200
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0200, distance_pct: 0.0150 }
+    trail_12:
+      name: "T12_sl2p50_act2p00_dist1p00"
+      stop_loss_pct: 0.0250
+      take_profit_pct: null
+      trailing: { activation_pct: 0.0200, distance_pct: 0.0100 }
+
+  regime:
+    classes:
+      - RANGE
+      - LOW_VOL_TREND
+      - NORMAL_TREND
+      - STRONG_TREND
+      - HIGH_VOLATILITY
+    rules:
+      high_vol_natr: 0.035
+      range_adx: 20.0
+      low_trend_adx: 30.0
+      normal_trend_adx: 40.0
+
+  s_bands:
+    - { label: "0.60-0.65", lo: 0.60, hi: 0.65 }
+    - { label: "0.65-0.70", lo: 0.65, hi: 0.70 }
+    - { label: "0.70-0.80", lo: 0.70, hi: 0.80 }
+    - { label: "0.80+", lo: 0.80, hi: null }

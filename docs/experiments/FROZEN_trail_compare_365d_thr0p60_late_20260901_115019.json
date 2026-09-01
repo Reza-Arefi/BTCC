@@ -1,0 +1,14 @@
+{
+  "experiment_id": "trail_compare_365d_thr0p60_late_20260901_115019",
+  "frozen_utc": "2026-09-01T13:05:00+00:00",
+  "reason": "Superseded by selector_experiment_v1 (T1-T12 + A-F). Preserved for later analysis.",
+  "entry": "S >= 0.60, LATE_ENTRY_ALLOWED, static weights, trail_exit_v3",
+  "last_checkpoint": {
+    "day_number": 70,
+    "timestamp": "2025-11-10 00:00:00+00:00",
+    "n_opportunities": 292,
+    "n_legs": 4060
+  },
+  "on_disk": "results/trail_compare_365d_thr0p60_late_20260901_115019",
+  "status": "STOPPED_SAFE"
+}

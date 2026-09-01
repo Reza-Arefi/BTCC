@@ -121,10 +121,24 @@ def run_trail_experiment_backtest(
     max_open_rejects = 0
     own_cache: dict = {}
 
+    def _stamp_entry_days() -> None:
+        """Attach opportunity entry day to every leg (shared across T1–T14)."""
+        oid_day = {
+            str(o["opportunity_id"]): int(o["day_number"])
+            for o in opp_rows
+            if o.get("opportunity_id") is not None and o.get("day_number") is not None
+        }
+        for rec in leg_rows:
+            if rec.get("entry_day_number") is None:
+                oid = rec.get("opportunity_id")
+                if oid is not None and str(oid) in oid_day:
+                    rec["entry_day_number"] = oid_day[str(oid)]
+
     def _flush_day(day_n: int, ts_end: pd.Timestamp) -> None:
         nonlocal last_flushed_day
         if last_flushed_day == day_n:
             return
+        _stamp_entry_days()
         open_snap = {
             oid: {
                 **{k: v for k, v in opp.items() if k != "legs"},
@@ -356,6 +370,7 @@ def run_trail_experiment_backtest(
             leg_rows.append(rec)
         sm.register_close(oid, opp.get("symbol"))
     open_book.clear()
+    _stamp_entry_days()
 
     pred_df = pd.DataFrame(pred_rows)
     opp_df = pd.DataFrame(opp_rows)

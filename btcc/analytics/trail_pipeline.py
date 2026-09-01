@@ -85,6 +85,7 @@ def build_trail_analytics_asof(
         max_day=day_number,
         benchmark_key=benchmark_key,
         starting_capital_usd=starting_capital_usd,
+        opportunities=opps,
     )
     logger.info("Trail analytics day=%s → %s", day_number, analytics_root)
     return analytics_root

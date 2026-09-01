@@ -23,11 +23,19 @@ def generate_trail_plots(
     max_day: int,
     benchmark_key: str = "trail_5",
     starting_capital_usd: float = 1000.0,
+    opportunities: pd.DataFrame | None = None,
 ) -> None:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     if legs.empty:
         return
+
+    legs = legs.copy()
+    if "entry_day_number" not in legs.columns and opportunities is not None and not opportunities.empty:
+        if "opportunity_id" in opportunities.columns and "day_number" in opportunities.columns:
+            meta = opportunities[["opportunity_id", "day_number"]].drop_duplicates("opportunity_id")
+            meta = meta.rename(columns={"day_number": "entry_day_number"})
+            legs = legs.merge(meta, on="opportunity_id", how="left")
 
     _plot_cumulative_return(daily_cap, out_dir, max_day, benchmark_key)
     _plot_drawdown(daily_cap, out_dir, max_day, benchmark_key)
@@ -150,18 +158,41 @@ def _plot_avg_pnl(legs: pd.DataFrame, out_dir: Path) -> None:
 
 
 def _plot_trade_count(legs: pd.DataFrame, out_dir: Path, max_day: int) -> None:
-    if "day_number" not in legs.columns:
-        return
+    """Cumulative opened trades by ENTRY day — must be identical for T1–T14."""
+    df = legs.copy()
+    if "entry_day_number" not in df.columns:
+        # Last resort: still plot, but label that exit-day bias may remain
+        if "day_number" not in df.columns:
+            return
+        day_col = "day_number"
+        title = "Number of trades over time (WARNING: exit-day axis)"
+    else:
+        day_col = "entry_day_number"
+        title = "Number of trades over time (by entry day — same for all strategies)"
+
     fig, ax = plt.subplots(figsize=(12, 5))
+    plotted = False
     for sk in TRAIL_STRATEGY_KEYS:
-        g = legs[(legs["strategy_key"] == sk) & (legs["day_number"] <= max_day)]
+        g = df[(df["strategy_key"] == sk) & (df[day_col].notna()) & (df[day_col] <= max_day)]
         if g.empty:
             continue
-        c = g.groupby("day_number").size()
-        ax.plot(c.index, c.values.cumsum(), label=sk, alpha=0.8)
+        c = g.groupby(day_col).size().sort_index()
+        days = list(range(1, int(max_day) + 1))
+        cum = []
+        running = 0
+        cmap = c.to_dict()
+        for d in days:
+            running += int(cmap.get(d, 0))
+            cum.append(running)
+        ax.plot(days, cum, label=sk, alpha=0.85, linewidth=1.2)
+        plotted = True
+    if not plotted:
+        plt.close(fig)
+        return
     ax.set_xlabel("Day")
     ax.set_ylabel("Cumulative trades")
-    ax.set_title("Number of trades over time")
+    ax.set_title(title)
+    ax.set_xlim(1, max_day)
     ax.legend(fontsize=7, ncol=2)
     fig.tight_layout()
     fig.savefig(out_dir / "trade_count_over_time.png", dpi=120)

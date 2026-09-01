@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch E-memory walk-forward experiment (E-10..E-365). Historical only."""
+"""Launch E-memory walk-forward experiment (E-3..E-90). Historical only."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def main() -> int:
 
     me = sim.get("selector_memory_experiment") or {}
     eval_days = int(me.get("eval_days", 365))
-    warmup_days = int(me.get("warmup_days", 365))
+    warmup_days = int(me.get("warmup_days", 90))
     summary_text = pre_run_memory_summary(sim)
     logger.info("PRE-RUN CONFIG:\n%s", summary_text)
 
@@ -60,7 +60,7 @@ def main() -> int:
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     meta = {
-        "experiment": "selector_E_memory_walkforward_v1",
+        "experiment": "selector_E_memory_walkforward_v2",
         "started_utc": datetime.now(timezone.utc).isoformat(),
         "git_sha": git_sha,
         "eval_days": eval_days,

@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MEMORY_CFG_PATH = ROOT / "configs" / "experiments" / "selector_E_memory_walkforward.yaml"
 SELECTOR_CFG_PATH = ROOT / "configs" / "selector_experiment_config.yaml"
 
-MEMORY_ARM_LABELS = ("E-10", "E-30", "E-60", "E-90", "E-180", "E-365")
+MEMORY_ARM_LABELS = ("E-3", "E-7", "E-14", "E-30", "E-60", "E-90")
 CF_ARM_LABELS = tuple(f"T{i}" for i in range(1, 11))
 CF_STRATEGY_KEYS = tuple(f"trail_{i}" for i in range(1, 11))
 
@@ -49,7 +49,7 @@ def load_selector_memory_config(path: Path | None = None) -> dict[str, Any]:
     strategies = {k: deepcopy(all_strategies[k]) for k in cf_keys if k in all_strategies}
 
     merged = deepcopy(sim)
-    merged["experiment_kind"] = "selector_E_memory_walkforward_v1"
+    merged["experiment_kind"] = "selector_E_memory_walkforward_v2"
     merged["long_threshold"] = float(me.get("long_threshold", 0.60))
     upper = me.get("upper_threshold")
     merged["upper_threshold"] = float(upper) if upper is not None else None

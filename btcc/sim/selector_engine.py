@@ -393,7 +393,7 @@ class SelectorState:
 
 
 def build_selector_memory_group(lookbacks: dict[str, int], *, switching: dict[str, Any] | None = None) -> dict[str, SelectorState]:
-    """Build E-10..E-365 rank_ewma selectors differing only by lookback_days."""
+    """Build E-3..E-90 rank_ewma selectors differing only by lookback_days."""
     sw = switching or {}
     min_h = float(sw.get("minimum_selection_duration_hours", 6))
     margin = float(sw.get("switch_margin", 0.0005))

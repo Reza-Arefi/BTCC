@@ -1,7 +1,7 @@
 {
   "experiment_id": "selector_compare_365d_thr0p60_20260901_132655",
   "frozen_utc": "2026-09-01T16:15:00+00:00",
-  "reason": "Stopped for E-memory walk-forward experiment (E-10..E-365). Preserved for analysis.",
+  "reason": "Stopped for E-memory walk-forward experiment (E-3..E-90). Preserved for analysis.",
   "git_tag_at_stop": "baseline-selector-E-v1",
   "git_commit_at_stop": "f875136",
   "last_checkpoint": {

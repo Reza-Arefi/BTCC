@@ -680,7 +680,7 @@ def run_selector_memory_backtest(
 
     summary = _summarize(pred_df[pred_df.get("eval_phase", True) == True] if "eval_phase" in pred_df.columns else pred_df, legs_df, lo, eval_days, dom_series, max_simultaneous=max_simultaneous, max_open_rejects=max_open_rejects)  # noqa: E712
     summary.update({
-        "experiment_kind": "selector_E_memory_walkforward_v1",
+        "experiment_kind": "selector_E_memory_walkforward_v2",
         "weight_mode": "selector_memory",
         "upper_threshold": hi,
         "n_arms": len(MEMORY_ARM_LABELS) + len(CF_ARM_LABELS),
@@ -702,7 +702,7 @@ def run_selector_memory_backtest(
 
     manifest = {
         "experiment_name": "selector_E_memory_walkforward",
-        "experiment_kind": "selector_E_memory_walkforward_v1",
+        "experiment_kind": "selector_E_memory_walkforward_v2",
         "eval_start": str(eval_start),
         "eval_end": str(eval_end),
         "cf_warmup_start": str(cf_warmup_start),

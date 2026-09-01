@@ -3,7 +3,7 @@
 
 selector_memory_experiment:
   enabled: true
-  version: "selector_E_memory_walkforward_v1"
+  version: "selector_E_memory_walkforward_v2"
   experiment_id_prefix: "selector_E_memory_walkforward"
 
   # Entry — identical to baseline E-v1 experiment
@@ -21,8 +21,8 @@ selector_memory_experiment:
   one_opportunity_per_pair: true
 
   # Walk-forward windows (days)
-  eval_days: 365
-  warmup_days: 365  # max lookback (E-365) — counterfactual history only during warmup
+  eval_days: 365          # one-year out-of-sample evaluation period
+  warmup_days: 90         # max selector memory (E-90); CF history only during warmup
 
   btc_d_health:
     require_for_new_trades: false
@@ -42,12 +42,12 @@ selector_memory_experiment:
   ewma_half_life_days: 7
 
   lookbacks_days:
-    E-10: 10
+    E-3: 3
+    E-7: 7
+    E-14: 14
     E-30: 30
     E-60: 60
     E-90: 90
-    E-180: 180
-    E-365: 365
 
   # Counterfactual strategies T1–T10 (same geometry as baseline; subset of T1–T12 experiment)
   counterfactual_strategy_keys:

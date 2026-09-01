@@ -13,6 +13,8 @@ def test_memory_config_valid():
     assert not validate_selector_memory(sim)
     lb = sim["selector_memory_experiment"]["lookbacks_days"]
     assert set(lb.keys()) == set(MEMORY_ARM_LABELS)
+    assert sim["selector_memory_experiment"]["warmup_days"] == 90
+    assert sim["selector_memory_experiment"]["eval_days"] == 365
 
 
 def test_lookback_no_lookahead():
@@ -35,11 +37,11 @@ def test_lookback_no_lookahead():
 
 
 def test_build_memory_group_distinct_lookbacks():
-    lb = {"E-10": 10, "E-30": 30, "E-60": 60, "E-90": 90, "E-180": 180, "E-365": 365}
+    lb = {"E-3": 3, "E-7": 7, "E-14": 14, "E-30": 30, "E-60": 60, "E-90": 90}
     group = build_selector_memory_group(lb)
     assert len(group) == 6
     vals = {s.lookback_days for s in group.values()}
-    assert vals == {10.0, 30.0, 60.0, 90.0, 180.0, 365.0}
+    assert vals == {3.0, 7.0, 14.0, 30.0, 60.0, 90.0}
     for s in group.values():
         assert s.kind == "rank_ewma"
         assert s.cfg["half_life_days"] == 7
@@ -47,11 +49,11 @@ def test_build_memory_group_distinct_lookbacks():
 
 def test_selector_state_roundtrip_lookback():
     st = SelectorState(
-        selector_id="selector_e_10",
-        arm_label="E-10",
+        selector_id="selector_e_7",
+        arm_label="E-7",
         kind="rank_ewma",
         cfg={"half_life_days": 7},
-        lookback_days=10.0,
+        lookback_days=7.0,
     )
     restored = SelectorState.from_dict(st.to_dict())
-    assert restored.lookback_days == 10.0
+    assert restored.lookback_days == 7.0

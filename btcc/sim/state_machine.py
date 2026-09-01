@@ -28,6 +28,7 @@ class PairSignalState(str, Enum):
 @dataclass
 class CrossingStateMachine:
     long_threshold: float = 0.60
+    upper_threshold: float | None = None  # exclusive upper band; None = no cap
     max_open: int = 10
     one_per_pair: bool = True
     # pair_key -> PairSignalState (zone membership, independent of open trade)
@@ -43,9 +44,17 @@ class CrossingStateMachine:
     def slots_remaining(self) -> int:
         return max(0, self.max_open - self.n_open())
 
+    def _in_band(self, s: float) -> bool:
+        if s < self.long_threshold:
+            return False
+        if self.upper_threshold is not None and s >= float(self.upper_threshold):
+            return False
+        return True
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "long_threshold": self.long_threshold,
+            "upper_threshold": self.upper_threshold,
             "max_open": self.max_open,
             "one_per_pair": self.one_per_pair,
             "zone_state": {k: v.value for k, v in self.zone_state.items()},
@@ -57,6 +66,9 @@ class CrossingStateMachine:
     def from_dict(cls, data: dict[str, Any]) -> "CrossingStateMachine":
         sm = cls(
             long_threshold=float(data.get("long_threshold", 0.60)),
+            upper_threshold=(
+                float(data["upper_threshold"]) if data.get("upper_threshold") is not None else None
+            ),
             max_open=int(data.get("max_open", 10)),
             one_per_pair=bool(data.get("one_per_pair", True)),
         )
@@ -91,7 +103,7 @@ class CrossingStateMachine:
           trade_opened (suggested), rejection_reason
         """
         prev = self.zone_state.get(pair, PairSignalState.FLAT)
-        in_zone = S >= self.long_threshold
+        in_zone = self._in_band(S)
         crossed_into = (prev == PairSignalState.FLAT) and in_zone
         crossed_out = (prev == PairSignalState.IN_SIGNAL) and (not in_zone)
         still_in_zone = (prev == PairSignalState.IN_SIGNAL) and in_zone
@@ -106,7 +118,10 @@ class CrossingStateMachine:
         rejection: str | None = None
 
         if not in_zone:
-            rejection = "BELOW_THRESHOLD"
+            if S >= self.long_threshold and self.upper_threshold is not None and S >= self.upper_threshold:
+                rejection = "ABOVE_THRESHOLD"
+            else:
+                rejection = "BELOW_THRESHOLD"
         elif still_in_zone:
             # Already in qualifying zone — do not open another
             rejection = "SIGNAL_CONTINUATION"
@@ -125,6 +140,7 @@ class CrossingStateMachine:
             "pair": pair,
             "S": S,
             "threshold": self.long_threshold,
+            "upper_threshold": self.upper_threshold,
             "prev_zone": prev.value,
             "zone": self.zone_state[pair].value,
             "signal_generated": signal_generated,

@@ -1,0 +1,141 @@
+# Trailing-exit geometry experiment — historical only, no live bot handoff.
+# Entry frozen: 0.65 <= S < 0.85, static weights, no exhaustion rejection.
+
+trail_experiment:
+  enabled: true
+  version: "trail_exit_v1"
+  experiment_id_prefix: "trail_compare_365d"
+
+  # Entry band (inclusive lower, exclusive upper)
+  long_threshold: 0.65
+  upper_threshold: 0.85
+
+  # Static weights only — no daily adaptation
+  weight_mode: static
+  disable_weight_updates: true
+  disable_late_entry_rejection: true
+  entry_policies: []  # single common opportunity book
+
+  starting_capital_usd: 1000.0
+  notional_usd: 100.0
+  compound_portfolio: true
+
+  max_open_opportunities: 10
+  one_opportunity_per_pair: true
+  total_days: 365
+
+  benchmark_strategy_key: trail_3
+
+  btc_d_health:
+    require_for_new_trades: false
+
+  telegram: OFF
+  allow_trading: false
+  auto_live_handoff: false
+
+  strategies:
+    trail_1:
+      name: "T1_sl0p75_act0p75_dist0p25"
+      stop_loss_pct: 0.0075
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0075
+        distance_pct: 0.0025
+    trail_2:
+      name: "T2_sl1p00_act1p00_dist0p25"
+      stop_loss_pct: 0.0100
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0100
+        distance_pct: 0.0025
+    trail_3:
+      name: "T3_benchmark_sl1p00_act1p00_dist0p50"
+      stop_loss_pct: 0.0100
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0100
+        distance_pct: 0.0050
+    trail_4:
+      name: "T4_sl1p50_act1p00_dist0p50"
+      stop_loss_pct: 0.0150
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0100
+        distance_pct: 0.0050
+    trail_5:
+      name: "T5_sl1p50_act1p50_dist0p50"
+      stop_loss_pct: 0.0150
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0150
+        distance_pct: 0.0050
+    trail_6:
+      name: "T6_sl2p00_act1p50_dist0p75"
+      stop_loss_pct: 0.0200
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0150
+        distance_pct: 0.0075
+    trail_7:
+      name: "T7_sl2p00_act2p00_dist0p75"
+      stop_loss_pct: 0.0200
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0200
+        distance_pct: 0.0075
+    trail_8:
+      name: "T8_sl2p50_act2p00_dist1p00"
+      stop_loss_pct: 0.0250
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0200
+        distance_pct: 0.0100
+    trail_9:
+      name: "T9_sl3p00_act3p00_dist1p00"
+      stop_loss_pct: 0.0300
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0300
+        distance_pct: 0.0100
+    trail_10:
+      name: "T10_sl3p00_act3p00_dist1p50"
+      stop_loss_pct: 0.0300
+      take_profit_pct: null
+      trailing:
+        activation_pct: 0.0300
+        distance_pct: 0.0150
+
+  regime:
+    classes:
+      - RANGE
+      - LOW_VOL_TREND
+      - NORMAL_TREND
+      - STRONG_TREND
+      - HIGH_VOLATILITY
+    rules:
+      high_vol_natr: 0.035
+      range_adx: 20.0
+      low_trend_adx: 30.0
+      normal_trend_adx: 40.0
+
+  analytics:
+    day_axis: true
+    primary_unit: cumulative_return_pct
+    plots:
+      - cumulative_return_all
+      - drawdown_all
+      - win_rate_all
+      - profit_factor_all
+      - avg_pnl_per_trade_all
+      - trade_count_over_time
+      - exit_distribution
+      - trail_activation_rate
+      - mfe_distribution
+      - mae_distribution
+      - mfe_vs_mae
+      - avg_pnl_vs_mfe
+      - strategy_regime_return_heatmap
+      - strategy_regime_winrate_heatmap
+      - strategy_regime_count_heatmap
+      - strategy_ranking_over_time
+      - cumulative_return_benchmark_highlight

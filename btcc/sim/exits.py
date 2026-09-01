@@ -67,6 +67,15 @@ class StrategyLegState:
     exit_reason: str | None = None
     exit_ts: Any = None
     exit_result: dict[str, Any] | None = None
+    # MFE / MAE excursion tracking (ALT/BTC return vs entry fill)
+    mfe_pct: float = 0.0
+    mae_pct: float = 0.0
+    peak_price: float | None = None
+    trough_price: float | None = None
+    trail_activation_ts: Any = None
+    activation_return_pct: float | None = None
+    peak_before_exit_pct: float = 0.0
+    bars_held: int = 0
 
     def active_stop(self) -> float:
         if self.trailing_active and self.trailing_stop is not None:
@@ -144,6 +153,16 @@ def process_bar_on_leg(
     low = float(bar["low"])
     close = float(bar["close"])
     ts = bar["timestamp"]
+    leg.bars_held += 1
+    entry_fill = float(leg.position["entry_fill_price"])
+    if entry_fill > 0:
+        bar_mfe = (high / entry_fill) - 1.0
+        bar_mae = (low / entry_fill) - 1.0
+        leg.mfe_pct = max(leg.mfe_pct, bar_mfe)
+        leg.mae_pct = min(leg.mae_pct, bar_mae)
+        leg.peak_price = high if leg.peak_price is None else max(leg.peak_price, high)
+        leg.trough_price = low if leg.trough_price is None else min(leg.trough_price, low)
+        leg.peak_before_exit_pct = max(leg.peak_before_exit_pct, bar_mfe)
     stop = leg.active_stop()
 
     # Trailing activation / ratchet (Strategy 3)
@@ -165,6 +184,8 @@ def process_bar_on_leg(
             leg.trailing_active = True
             leg.highest_since_activation = high
             leg.trailing_stop = high * (1.0 - leg.spec.trail_distance_pct)
+            leg.trail_activation_ts = ts
+            leg.activation_return_pct = (high / entry_fill - 1.0) if entry_fill > 0 else None
             stop = leg.active_stop()
 
     if leg.trailing_active:
@@ -297,6 +318,9 @@ def leg_to_record(leg: StrategyLegState, opportunity_id: str) -> dict[str, Any]:
             hold = (pd.Timestamp(leg.exit_ts) - pd.Timestamp(leg.entry_ts)).total_seconds() / 3600.0
         except Exception:
             hold = None
+    realized = float(res.get("pnl_pct") or 0.0)
+    mfe = float(leg.mfe_pct)
+    mfe_frac = (realized / mfe) if mfe > 1e-9 else None
     return {
         "opportunity_id": opportunity_id,
         "strategy_key": leg.spec.key,
@@ -325,4 +349,14 @@ def leg_to_record(leg: StrategyLegState, opportunity_id: str) -> dict[str, Any]:
         "slippage_btc_approx": res.get("slippage_btc_approx"),
         "net_pnl_btc": res.get("net_pnl_btc"),
         "holding_hours": hold,
+        "bars_held": leg.bars_held,
+        "mfe_pct": mfe,
+        "mae_pct": float(leg.mae_pct),
+        "peak_price": leg.peak_price,
+        "trough_price": leg.trough_price,
+        "trail_activation_ts": str(leg.trail_activation_ts) if leg.trail_activation_ts else None,
+        "trail_activated": bool(leg.trailing_active or leg.trail_activation_ts),
+        "activation_return_pct": leg.activation_return_pct,
+        "peak_before_exit_pct": float(leg.peak_before_exit_pct),
+        "realized_fraction_of_mfe": mfe_frac,
     }

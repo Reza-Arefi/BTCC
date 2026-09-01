@@ -22,7 +22,11 @@ def day_dir(out_dir: Path, day_number: int) -> Path:
 
 def _write_df(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(path, index=False)
+    if df is None or df.empty:
+        cols = list(df.columns) if df is not None and len(df.columns) else ["_empty"]
+        pd.DataFrame(columns=cols).to_csv(path, index=False)
+    else:
+        df.to_csv(path, index=False)
 
 
 def summarize_day(
@@ -347,20 +351,32 @@ def write_daily_checkpoint(
 
     if refresh_analytics:
         try:
-            from btcc.analytics.pipeline import build_arm_analytics_asof
+            if str(weight_mode).startswith("trail"):
+                from btcc.analytics.trail_pipeline import build_trail_analytics_asof
 
-            build_arm_analytics_asof(
-                out_dir,
-                arm=weight_mode,
-                day_number=day_number,
-                init_days=init_days,
-                eval_start=eval_start,
-                telegram_enabled=False,
-                analytics_root=out_dir / "analytics",
-                starting_capital_usd=starting_capital_usd,
-            )
+                build_trail_analytics_asof(
+                    out_dir,
+                    day_number=day_number,
+                    eval_start=eval_start,
+                    starting_capital_usd=starting_capital_usd,
+                    analytics_root=out_dir / "analytics",
+                )
+            else:
+                from btcc.analytics.pipeline import build_arm_analytics_asof
+
+                build_arm_analytics_asof(
+                    out_dir,
+                    arm=weight_mode,
+                    day_number=day_number,
+                    init_days=init_days,
+                    eval_start=eval_start,
+                    telegram_enabled=False,
+                    analytics_root=out_dir / "analytics",
+                    starting_capital_usd=starting_capital_usd,
+                )
             # Snapshot as-of plots into the day folder (append-only history).
-            src_plots = out_dir / "analytics" / "plots" / weight_mode
+            plot_sub = "trail" if str(weight_mode).startswith("trail") else weight_mode
+            src_plots = out_dir / "analytics" / "plots" / plot_sub
             if src_plots.exists():
                 dst_plots = ddir / "plots"
                 if dst_plots.exists():

@@ -1,14 +1,15 @@
 {
   "experiment_id": "selector_compare_365d_thr0p60_20260901_132655",
+  "baseline_id": "baseline-selector-compare-A-F-T1-T12-v1",
   "frozen_utc": "2026-09-01T16:15:00+00:00",
-  "reason": "Stopped for E-memory walk-forward experiment (E-3..E-90). Preserved for analysis.",
+  "updated_utc": "2026-09-02T15:02:21+00:00",
+  "reason": "Canonical A–F + T1–T12 365d compare (S>=0.60, late entry allowed). Resumed 2026-09-02 from day 122.",
   "git_tag_at_stop": "baseline-selector-E-v1",
   "git_commit_at_stop": "f875136",
-  "last_checkpoint": {
-    "day_number": 121,
-    "timestamp": "2025-12-31 00:00:00+00:00",
-    "n_opportunities": 473
-  },
+  "resume_launch": "results/SELECTOR_EXPERIMENT_LAUNCH_20260902_150221.json",
+  "settings_baseline": "docs/experiments/BASELINE_selector_compare_A_F_T1_T12_v1.json",
+  "reference_doc": "docs/SELECTOR_COMPARE_365D_REFERENCE.md",
   "on_disk": "results/selector_compare_365d_thr0p60_20260901_132655",
-  "status": "STOPPED_SAFE"
+  "status": "RUNNING_RESUMED",
+  "config_path": "configs/selector_experiment_config.yaml"
 }

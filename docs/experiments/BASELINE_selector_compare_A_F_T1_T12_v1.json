@@ -1,0 +1,389 @@
+{
+  "baseline_id": "baseline-selector-compare-A-F-T1-T12-v1",
+  "created_utc": "2026-09-02T15:18:24.163175+00:00",
+  "status": "ACTIVE_REFERENCE_BASELINE",
+  "purpose": "Canonical settings for the 365d selector compare: fixed T1\u2013T12 + dynamic A\u2013F. Late entry allowed. Static weights. S>=0.60.",
+  "experiment_kind": "selector_experiment_v1",
+  "experiment_id_prefix": "selector_compare_365d",
+  "config_path": "configs/selector_experiment_config.yaml",
+  "reference_doc": "docs/SELECTOR_COMPARE_365D_REFERENCE.md",
+  "runner": "scripts/run_selector_experiment_1y.py",
+  "historical_run": {
+    "output_dir": "results/selector_compare_365d_thr0p60_20260901_132655",
+    "resume_launch": "results/SELECTOR_EXPERIMENT_LAUNCH_20260902_150221.json",
+    "note": "Resume-in-progress 365d compare; plots under analytics/plots/selector/"
+  },
+  "entry": {
+    "long_threshold": 0.6,
+    "upper_threshold": null,
+    "weight_mode": "static",
+    "disable_weight_updates": true,
+    "disable_late_entry_rejection": true,
+    "late_entry_allowed": true
+  },
+  "execution": {
+    "starting_capital_usd": 1000.0,
+    "notional_usd": 100.0,
+    "compound_portfolio": true,
+    "max_open_opportunities": 10,
+    "one_opportunity_per_pair": true,
+    "total_days": 365,
+    "n_arms": 18,
+    "arms": {
+      "fixed": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T8",
+        "T9",
+        "T10",
+        "T11",
+        "T12"
+      ],
+      "selectors": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F"
+      ]
+    },
+    "allow_trading": false,
+    "telegram": "OFF",
+    "btc_d_enabled": false,
+    "btc_d_require_for_new_trades": false
+  },
+  "switching": {
+    "minimum_selection_duration_hours": 6,
+    "switch_margin": 0.0005
+  },
+  "fixed_strategies_T1_T12": [
+    {
+      "arm": "T1",
+      "strategy_key": "trail_1",
+      "name": "T1_sl0p75_act0p75_dist0p25",
+      "stop_loss_pct": 0.0075,
+      "take_profit_pct": null,
+      "activation_pct": 0.0075,
+      "distance_pct": 0.0025,
+      "benchmark": false
+    },
+    {
+      "arm": "T2",
+      "strategy_key": "trail_2",
+      "name": "T2_sl1p00_act1p00_dist0p25",
+      "stop_loss_pct": 0.01,
+      "take_profit_pct": null,
+      "activation_pct": 0.01,
+      "distance_pct": 0.0025,
+      "benchmark": false
+    },
+    {
+      "arm": "T3",
+      "strategy_key": "trail_3",
+      "name": "T3_sl0p75_act0p75_dist0p50",
+      "stop_loss_pct": 0.0075,
+      "take_profit_pct": null,
+      "activation_pct": 0.0075,
+      "distance_pct": 0.005,
+      "benchmark": false
+    },
+    {
+      "arm": "T4",
+      "strategy_key": "trail_4",
+      "name": "T4_sl1p00_act1p00_dist0p50",
+      "stop_loss_pct": 0.01,
+      "take_profit_pct": null,
+      "activation_pct": 0.01,
+      "distance_pct": 0.005,
+      "benchmark": true
+    },
+    {
+      "arm": "T5",
+      "strategy_key": "trail_5",
+      "name": "T5_sl1p50_act1p00_dist0p50",
+      "stop_loss_pct": 0.015,
+      "take_profit_pct": null,
+      "activation_pct": 0.01,
+      "distance_pct": 0.005,
+      "benchmark": false
+    },
+    {
+      "arm": "T6",
+      "strategy_key": "trail_6",
+      "name": "T6_sl1p50_act1p50_dist0p50",
+      "stop_loss_pct": 0.015,
+      "take_profit_pct": null,
+      "activation_pct": 0.015,
+      "distance_pct": 0.005,
+      "benchmark": false
+    },
+    {
+      "arm": "T7",
+      "strategy_key": "trail_7",
+      "name": "T7_sl2p00_act2p00_dist0p50",
+      "stop_loss_pct": 0.02,
+      "take_profit_pct": null,
+      "activation_pct": 0.02,
+      "distance_pct": 0.005,
+      "benchmark": false
+    },
+    {
+      "arm": "T8",
+      "strategy_key": "trail_8",
+      "name": "T8_sl0p75_act0p75_dist0p75",
+      "stop_loss_pct": 0.0075,
+      "take_profit_pct": null,
+      "activation_pct": 0.0075,
+      "distance_pct": 0.0075,
+      "benchmark": false
+    },
+    {
+      "arm": "T9",
+      "strategy_key": "trail_9",
+      "name": "T9_sl1p50_act1p50_dist0p25",
+      "stop_loss_pct": 0.015,
+      "take_profit_pct": null,
+      "activation_pct": 0.015,
+      "distance_pct": 0.0025,
+      "benchmark": false
+    },
+    {
+      "arm": "T10",
+      "strategy_key": "trail_10",
+      "name": "T10_sl2p00_act1p50_dist0p50",
+      "stop_loss_pct": 0.02,
+      "take_profit_pct": null,
+      "activation_pct": 0.015,
+      "distance_pct": 0.005,
+      "benchmark": false
+    },
+    {
+      "arm": "T11",
+      "strategy_key": "trail_11",
+      "name": "T11_sl2p00_act2p00_dist1p50",
+      "stop_loss_pct": 0.02,
+      "take_profit_pct": null,
+      "activation_pct": 0.02,
+      "distance_pct": 0.015,
+      "benchmark": false
+    },
+    {
+      "arm": "T12",
+      "strategy_key": "trail_12",
+      "name": "T12_sl2p50_act2p00_dist1p00",
+      "stop_loss_pct": 0.025,
+      "take_profit_pct": null,
+      "activation_pct": 0.02,
+      "distance_pct": 0.01,
+      "benchmark": false
+    }
+  ],
+  "dynamic_selectors_A_F": [
+    {
+      "arm": "A",
+      "kind": "ewma_7d",
+      "half_life_days": 7
+    },
+    {
+      "arm": "B",
+      "kind": "multi_horizon_ewma",
+      "weights": {
+        "h4": 0.15,
+        "d1": 0.3,
+        "d7": 0.55
+      },
+      "half_life_hours_4h": 4,
+      "half_life_days_1d": 1,
+      "half_life_days_7d": 7
+    },
+    {
+      "arm": "C",
+      "kind": "regime_conditional",
+      "half_life_days": 7,
+      "min_regime_observations": 5
+    },
+    {
+      "arm": "D",
+      "kind": "recent_plus_regime",
+      "recent_weight": 0.65,
+      "regime_weight": 0.35,
+      "half_life_days": 7,
+      "min_regime_observations": 5
+    },
+    {
+      "arm": "E",
+      "kind": "rank_ewma",
+      "half_life_days": 7
+    },
+    {
+      "arm": "F",
+      "kind": "downside_aware",
+      "half_life_days": 7,
+      "downside_lambda": 0.5
+    }
+  ],
+  "regime": {
+    "classes": [
+      "RANGE",
+      "LOW_VOL_TREND",
+      "NORMAL_TREND",
+      "STRONG_TREND",
+      "HIGH_VOLATILITY"
+    ],
+    "rules": {
+      "high_vol_natr": 0.035,
+      "range_adx": 20.0,
+      "low_trend_adx": 30.0,
+      "normal_trend_adx": 40.0
+    }
+  },
+  "s_bands": [
+    {
+      "label": "0.60-0.65",
+      "lo": 0.6,
+      "hi": 0.65
+    },
+    {
+      "label": "0.65-0.70",
+      "lo": 0.65,
+      "hi": 0.7
+    },
+    {
+      "label": "0.70-0.80",
+      "lo": 0.7,
+      "hi": 0.8
+    },
+    {
+      "label": "0.80+",
+      "lo": 0.8,
+      "hi": null
+    }
+  ],
+  "full_strategies_yaml_block": {
+    "trail_1": {
+      "name": "T1_sl0p75_act0p75_dist0p25",
+      "stop_loss_pct": 0.0075,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.0075,
+        "distance_pct": 0.0025
+      }
+    },
+    "trail_2": {
+      "name": "T2_sl1p00_act1p00_dist0p25",
+      "stop_loss_pct": 0.01,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.01,
+        "distance_pct": 0.0025
+      }
+    },
+    "trail_3": {
+      "name": "T3_sl0p75_act0p75_dist0p50",
+      "stop_loss_pct": 0.0075,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.0075,
+        "distance_pct": 0.005
+      }
+    },
+    "trail_4": {
+      "name": "T4_sl1p00_act1p00_dist0p50",
+      "stop_loss_pct": 0.01,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.01,
+        "distance_pct": 0.005
+      }
+    },
+    "trail_5": {
+      "name": "T5_sl1p50_act1p00_dist0p50",
+      "stop_loss_pct": 0.015,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.01,
+        "distance_pct": 0.005
+      }
+    },
+    "trail_6": {
+      "name": "T6_sl1p50_act1p50_dist0p50",
+      "stop_loss_pct": 0.015,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.015,
+        "distance_pct": 0.005
+      }
+    },
+    "trail_7": {
+      "name": "T7_sl2p00_act2p00_dist0p50",
+      "stop_loss_pct": 0.02,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.02,
+        "distance_pct": 0.005
+      }
+    },
+    "trail_8": {
+      "name": "T8_sl0p75_act0p75_dist0p75",
+      "stop_loss_pct": 0.0075,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.0075,
+        "distance_pct": 0.0075
+      }
+    },
+    "trail_9": {
+      "name": "T9_sl1p50_act1p50_dist0p25",
+      "stop_loss_pct": 0.015,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.015,
+        "distance_pct": 0.0025
+      }
+    },
+    "trail_10": {
+      "name": "T10_sl2p00_act1p50_dist0p50",
+      "stop_loss_pct": 0.02,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.015,
+        "distance_pct": 0.005
+      }
+    },
+    "trail_11": {
+      "name": "T11_sl2p00_act2p00_dist1p50",
+      "stop_loss_pct": 0.02,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.02,
+        "distance_pct": 0.015
+      }
+    },
+    "trail_12": {
+      "name": "T12_sl2p50_act2p00_dist1p00",
+      "stop_loss_pct": 0.025,
+      "take_profit_pct": null,
+      "trailing": {
+        "activation_pct": 0.02,
+        "distance_pct": 0.01
+      }
+    }
+  },
+  "do_not_change_without_new_baseline": [
+    "T1-T12 geometry (stop/activation/distance)",
+    "A-F selector kinds and parameters",
+    "Entry S>=0.60, static weights, late-entry rejection OFF",
+    "Switching: min_hold 6h, switch_margin 0.0005",
+    "E = rank_ewma half_life_days=7 with full CF history (not E-memory lookbacks)"
+  ],
+  "related_baselines": {
+    "paper_live_selector": "baseline-selector-E-v1 (docs/experiments/BASELINE_selector_E_v1.json) \u2014 live uses E only",
+    "not_this_baseline": "E-memory walkforward E-3..E-90 is a separate research experiment"
+  }
+}

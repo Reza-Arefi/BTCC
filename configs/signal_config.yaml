@@ -1,0 +1,139 @@
+# BTCC — BTC Relative-Strength Signal Bot (SIGNAL ONLY)
+# No trading. No orders. Rank by 4h P(outperform BTC).
+
+experiment:
+  name: btcc_signal_baseline
+  decision_interval: 15m
+  candle_interval: 15m
+  lookback_bars: 1000          # history for indicators / percentiles
+  top_n_detail: 3
+  top_n_rank: 5
+
+universe:
+  # Exact bases corresponding to the prior BTC-pair research BTC-quoted markets.
+  # Relative series = BASEUSDT / BTCUSDT (synthetic ALT/BTC).
+  # Exact mapping from BTC_pair cache/1h BTC-quoted markets:
+  #   ABTC, ADABTC, ATOMBTC, BCHBTC, BDXBTC, CKBTCBTC, DASHBTC, DATABTC,
+  #   DEXEBTC, DOTBTC, ETCBTC, ETHBTC, LTCBTC, NEOBTC, OMGBTC, SOLBTC,
+  #   TRXBTC, WBTCBTC, XLMBTC, XRPBTC
+  # Relative series = BASEUSDT / BTCUSDT (synthetic ALT/BTC). Native *BTC kept for audit.
+  source_note: "Exact 20 from BTC_pair research BTC-quoted universe"
+  bases:
+    - A
+    - ADA
+    - ATOM
+    - BCH
+    - BDX
+    - CKBTC
+    - DASH
+    - DATA
+    - DEXE
+    - DOT
+    - ETC
+    - ETH
+    - LTC
+    - NEO
+    - OMG
+    - SOL
+    - TRX
+    - WBTC
+    - XLM
+    - XRP
+  quote: USDT
+  btc_symbol: BTCUSDT
+  # Bases with no USDT listing on MEXC — fetch native BTC market only.
+  # Do NOT probe BASEUSDT first (avoids invalid-symbol 400s, e.g. CKBTCUSDT).
+  native_btc_only:
+    - CKBTC
+  # Original MEXC BTC-quoted market for each base (research fidelity)
+  btc_markets:
+    A: ABTC
+    ADA: ADABTC
+    ATOM: ATOMBTC
+    BCH: BCHBTC
+    BDX: BDXBTC
+    CKBTC: CKBTCBTC
+    DASH: DASHBTC
+    DATA: DATABTC
+    DEXE: DEXEBTC
+    DOT: DOTBTC
+    ETC: ETCBTC
+    ETH: ETHBTC
+    LTC: LTCBTC
+    NEO: NEOBTC
+    OMG: OMGBTC
+    SOL: SOLBTC
+    TRX: TRXBTC
+    WBTC: WBTCBTC
+    XLM: XLMBTC
+    XRP: XRPBTC
+  symbol_overrides: {}
+
+signal_classes:
+  strong_p4h: 0.70
+  weak_p4h_below: 0.60
+
+data:
+  mexc_rest: https://api.mexc.com
+  mexc_ws: wss://wbs.mexc.com/ws
+  candle_dir: data/candles
+  prediction_dir: data/predictions
+  # BTC dominance: RELATIVE top-N proxy (same formula as backtest).
+  # NOT CoinGecko /global absolute dominance.
+  dominance_source: coingecko_top_coins_relative
+  dominance_url: https://api.coingecko.com/api/v3/coins/markets
+  dominance_poll_seconds: 300
+  dominance_history_path: data/predictions/dominance_history_relative.json
+
+factors:
+  weights:
+    # Trading score uses ACTIVE_SIGNAL_KEYS only. btc_regime is contextual
+    # (still computed/logged) with effective weight forced to 0 in scoring code.
+    momentum: 0.20
+    trend: 0.20
+    btc_regime: 0.0
+    volume: 0.12
+    volatility: 0.10
+    rsi: 0.08
+    structure: 0.10
+
+late_entry:
+  weights:
+    extension: 0.20
+    ema_distance: 0.15
+    bollinger_extension: 0.15
+    rsi_exhaustion: 0.10
+    momentum_decay: 0.15
+    volume_divergence: 0.10
+    resistance_proximity: 0.10
+    reversal_evidence: 0.05
+  alert_threshold: 0.75
+  alert_cooldown_minutes: 60
+
+probability:
+  # Baseline: logistic map of signal score → probability (NOT raw score)
+  # Calibration updated walk-forward only when enough labeled rows exist
+  method: logistic_baseline
+  logistic_center: 0.50
+  logistic_scale: 8.0
+  min_rows_for_calibration: 200
+  horizons_hours: [1, 4, 8, 12, 24]
+  primary_rank_horizon: 4
+
+telegram:
+  enabled: true
+  # Set via env: BTCC_TELEGRAM_BOT_TOKEN, BTCC_TELEGRAM_CHAT_ID
+  # Live: do NOT spam every 15m prediction — ops events + daily summary only
+  send_ranking_every_cycle: false
+  send_exhaustion_alerts: false
+  send_daily_summary: true
+  daily_summary_hour_local: 23
+  daily_summary_timezone: America/Sao_Paulo
+
+safety:
+  allow_trading: false
+  block_order_methods:
+    - create_order
+    - place_order
+    - cancel_order
+    - new_order

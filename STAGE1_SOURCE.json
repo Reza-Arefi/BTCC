@@ -1,0 +1,11 @@
+{
+  "source_host": "ip-172-31-46-40",
+  "source_region": "us-east-1",
+  "source_egress_ip": "100.27.80.205",
+  "source_git_commit": "a5021286df21c6a58c84fc2bf9b95bf162e7ca8c",
+  "source_git_desc": "a502128 Fail closed on exchangeInfo gaps and refresh MARKET capability every entry.",
+  "binance_btc_bot_git_state": "untracked_on_source_at_export",
+  "secrets_copied": false,
+  "live_enabled": false,
+  "dry_run": true
+}

@@ -1,0 +1,4 @@
+# binance_btc_bot runtime dependencies
+websockets>=12.0
+cryptography>=42.0.0
+PyYAML>=6.0

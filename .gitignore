@@ -1,0 +1,24 @@
+# Local secrets — never commit
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*ed25519*private*
+*private*key*
+
+# Runtime / local data
+.venv/
+__pycache__/
+*.py[cod]
+*.sqlite3
+data/
+binance_btc_bot/logs/
+*.log
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/

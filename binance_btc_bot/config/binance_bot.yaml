@@ -1,0 +1,200 @@
+# Binance BTC Compounding Bot — primary configuration
+# Real trading is DISABLED by default. Do not enable without explicit operator action.
+
+exchange:
+  name: binance
+  market: spot
+  # Public market data (works from restricted regions via Vision data API)
+  public_rest_base: https://data-api.binance.vision
+  # Signed trading REST (requires eligible region + API keys)
+  private_rest_base: https://api.binance.com
+  # Public market-data websocket (Vision). Official stream.binance.com may be 451.
+  public_ws_base: wss://data-stream.binance.vision
+  ws_base: wss://stream.binance.com:9443
+  # Authenticated user-data via Spot WebSocket API (listenKey discontinued 2026-02-20).
+  ws_api_base: wss://ws-api.binance.com:443/ws-api/v3
+  recv_window_ms: 5000
+
+live:
+  enabled: false          # HARD DEFAULT — never auto-enable
+  strategy: T1            # fixed live strategy
+  selector: null          # selectors A–F NOT used live
+  dry_run: true           # even if enabled later, prefer dry_run until Stage 8
+  # Deprecated aliases — authoritative values live under portfolio:
+  max_open_positions: 8
+  one_position_per_symbol: true
+
+# Authoritative live portfolio / trade-slot policy (supports 3–30 for experiments).
+portfolio:
+  max_simultaneous_trades: 8
+  allocation_per_trade: 0.125   # 12.5% of trading equity per trade
+  max_total_allocation: 1.0     # 8 × 12.5% = 100%
+  one_position_per_symbol: true
+
+risk:
+  max_loss_per_trade: 0.005   # 0.5% of account equity (planned loss at SL)
+  max_allocation_pct: 0.125   # must match portfolio.allocation_per_trade
+  max_aggregate_exposure: 1.0
+  no_leverage: true
+  stale_data_max_age_sec: 30
+  fee_buffer_pct: 0.002       # leave headroom so fees cannot push past allocation
+
+universe:
+  quote_execution: BTC
+  relative_construction: BASEUSDT_OVER_BTCUSDT
+  reference_market: BTCUSDT
+  btc_pairs:
+    - AAVEBTC
+    - ADABTC
+    - ARBBTC
+    - ATOMBTC
+    - AVAXBTC
+    - BCHBTC
+    - BNBBTC
+    - CAKEBTC
+    - DASHBTC
+    - DOGEBTC
+    - DOTBTC
+    - ETCBTC
+    - ETHBTC
+    - FETBTC
+    - FILBTC
+    - HBARBTC
+    - ICPBTC
+    - INJBTC
+    - LINKBTC
+    - LTCBTC
+    - NEARBTC
+    - NEXOBTC
+    - PAXGBTC
+    - PENDLEBTC
+    - RENDERBTC
+    - SOLBTC
+    - STXBTC
+    - SUIBTC
+    - TAOBTC
+    - THETABTC
+    - TRXBTC
+    - UNIBTC
+    - WBTCBTC
+    - WLDBTC
+    - XRPBTC
+    - XAUTBTC
+    - XTZBTC
+    - ZECBTC
+
+# Frozen research/live trail definitions (do not optimize).
+# arm_sl_activation_trail == stop_loss distance used for initial hard SL.
+strategies:
+  T1:
+    arm_sl_activation_trail: 0.0075
+    activation: 0.0075
+    trail_distance: 0.0025
+  T2:
+    arm_sl_activation_trail: 0.01
+    activation: 0.01
+    trail_distance: 0.0025
+  T3:
+    arm_sl_activation_trail: 0.0075
+    activation: 0.0075
+    trail_distance: 0.005
+  T4:
+    arm_sl_activation_trail: 0.01
+    activation: 0.01
+    trail_distance: 0.005
+  T5:
+    arm_sl_activation_trail: 0.015
+    activation: 0.01
+    trail_distance: 0.005
+  T6:
+    arm_sl_activation_trail: 0.015
+    activation: 0.015
+    trail_distance: 0.005
+  T7:
+    arm_sl_activation_trail: 0.02
+    activation: 0.02
+    trail_distance: 0.005
+  T8:
+    arm_sl_activation_trail: 0.0075
+    activation: 0.0075
+    trail_distance: 0.0075
+  T9:
+    arm_sl_activation_trail: 0.015
+    activation: 0.015
+    trail_distance: 0.0025
+  T10:
+    arm_sl_activation_trail: 0.02
+    activation: 0.015
+    trail_distance: 0.005
+
+# Research-only selector definitions (LIVE_SELECTOR = null).
+selectors:
+  A:
+    kind: ewma_7d
+  B:
+    kind: multi_horizon_ewma
+  C:
+    kind: regime_conditional
+  D:
+    kind: recent_plus_regime
+  E:
+    kind: rank_ewma
+  F:
+    kind: downside_aware
+
+entry:
+  long_threshold: 0.65
+  # null = no upper band (matches Binance research default)
+  upper_threshold: null
+
+# Production score path — must match Binance T1 backtest signal calculation.
+# LIVE remains false; this only defines how S is computed when a provider is wired.
+signal:
+  interval: 15m
+  lookback_bars: 1000
+  min_history_bars: 100
+  max_closed_candle_age_sec: 1800
+  signal_config_path: configs/signal_config.yaml
+  diagnostics: false          # set true or pass --signal-diag to log SCORE_DIAG lines
+  # Formula identity: compute_all_factors → combined_score (signed S), NOT raw signal_score.
+
+# Binance-native trailing exit mapping (documented; do not invent alternate geometry).
+binance_trailing:
+  mode: OCO_TAKE_PROFIT_TRAIL_PLUS_STOP_LOSS
+  # above leg: TAKE_PROFIT SELL with activation stopPrice + trailingDelta (BIPS)
+  # below leg: STOP_LOSS SELL at initial hard SL
+  prefer_market_contingent: true
+  limit_slippage_buffer_pct: 0.001  # only if LIMIT contingent types are forced
+
+storage:
+  sqlite_path: data/binance_btc_bot/bot.sqlite3
+
+logging:
+  level: INFO
+  dir: binance_btc_bot/logs
+
+# Notification policy — credentials are env-only (never stored here).
+notifications:
+  enabled: true
+  telegram:
+    enabled: true
+  sms:
+    enabled: true
+  policy:
+    INFO: [telegram]
+    WARNING: [telegram]
+    ERROR: [telegram]
+    CRITICAL: [telegram, sms]
+
+safety:
+  initial_state: NORMAL
+  halt_on_reconciliation_mismatch: true
+  halt_on_duplicate_order: true
+  halt_on_stale_data: true
+  halt_on_api_failure: true
+
+# Optional Stage-6 preflight hints (does not enable trading).
+preflight:
+  # Local Stage-5/6 host egress (must match Binance API key IP allowlist).
+  expected_egress_ips:
+    - 131.196.96.255

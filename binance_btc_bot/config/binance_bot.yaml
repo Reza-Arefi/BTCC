@@ -17,7 +17,7 @@ exchange:
 
 live:
   enabled: false          # HARD DEFAULT — never auto-enable
-  strategy: T1            # fixed live strategy
+  strategy: T4            # fixed live strategy (1% SL / 1% act / 0.5% trail)
   selector: null          # selectors A–F NOT used live
   dry_run: true           # even if enabled later, prefer dry_run until Stage 8
   # Deprecated aliases — authoritative values live under portfolio:
@@ -147,14 +147,15 @@ entry:
   # null = no upper band (matches Binance research default)
   upper_threshold: null
 
-# Production score path — must match Binance T1 backtest signal calculation.
-# LIVE remains false; this only defines how S is computed when a provider is wired.
+# Production score path — signed S via compute_all_factors → combined_score.
+# Live uses E2 faster-momentum profile (research early-breakout experiment).
 signal:
   interval: 15m
   lookback_bars: 1000
   min_history_bars: 100
   max_closed_candle_age_sec: 1800
   signal_config_path: configs/signal_config.yaml
+  momentum_profile: e2        # live-only override; research configs keep base unless set
   diagnostics: false          # set true or pass --signal-diag to log SCORE_DIAG lines
   # Formula identity: compute_all_factors → combined_score (signed S), NOT raw signal_score.
 

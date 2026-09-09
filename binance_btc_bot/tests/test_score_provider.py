@@ -250,7 +250,7 @@ class TestLiveMatchesBacktest(unittest.TestCase):
         cfg = load_config()
         self.assertFalse(cfg["live"]["enabled"])
         self.assertTrue(cfg["live"]["dry_run"])
-        self.assertEqual(cfg["live"]["strategy"], "T1")
+        self.assertEqual(cfg["live"]["strategy"], "T4")
         self.assertIn(cfg["live"]["selector"], (None, "null", ""))
         self.assertEqual(cfg["portfolio"]["max_simultaneous_trades"], 8)
         self.assertAlmostEqual(cfg["portfolio"]["allocation_per_trade"], 0.125)

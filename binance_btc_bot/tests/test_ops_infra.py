@@ -242,14 +242,14 @@ class TestNotificationManager(unittest.TestCase):
 
 
 class TestStrategyProvider(unittest.TestCase):
-    def test_fixed_provider_returns_t1(self):
+    def test_fixed_provider_returns_t7(self):
         cfg = load_config()
         provider = build_strategy_provider(cfg)
         self.assertIsInstance(provider, FixedStrategyProvider)
         strat = provider.get_strategy()
-        self.assertEqual(strat.key, "T1")
+        self.assertEqual(strat.key, "T4")
         self.assertIsNone(provider.selector_key())
-        self.assertAlmostEqual(strat.trail_distance, 0.0025)
+        self.assertAlmostEqual(strat.trail_distance, 0.005)
 
     def test_entry_engine_uses_provider_strategy(self):
         provider = FixedStrategyProvider("T1")

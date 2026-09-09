@@ -3,8 +3,10 @@
 Strategies share entry timestamp/price/notional/signal; differ only in exits.
 
 Same-candle conflict (no lower-TF data):
-  If both SL and TP (or trailing stop) are touched in the same 15m OHLC bar,
-  assume SL occurs first (conservative). Documented in sim_config.yaml.
+  If both SL and TP are touched in the same 15m OHLC bar, assume SL first.
+  If trail activation and initial hard SL are both touched in the same bar
+  (trail not yet active), assume hard SL first — do not activate trail.
+  Documented in sim_config.yaml.
 """
 
 from __future__ import annotations
@@ -25,6 +27,9 @@ class StrategySpec:
     take_profit_pct: float | None = None
     trail_activation_pct: float | None = None
     trail_distance_pct: float | None = None
+    # Optional adaptive trailing (research T11–T20). None => fixed trail.
+    adaptive_mode: str | None = None
+    adaptive_cfg: dict[str, Any] | None = None
 
 
 def specs_from_config(sim: dict[str, Any]) -> list[StrategySpec]:
@@ -47,6 +52,8 @@ def specs_from_config(sim: dict[str, Any]) -> list[StrategySpec]:
                 trail_distance_pct=(
                     float(trail["distance_pct"]) if trail.get("distance_pct") is not None else None
                 ),
+                adaptive_mode=(str(raw["adaptive_mode"]) if raw.get("adaptive_mode") else None),
+                adaptive_cfg=(dict(raw["adaptive_cfg"]) if raw.get("adaptive_cfg") else None),
             )
         )
     return out
@@ -76,6 +83,12 @@ class StrategyLegState:
     activation_return_pct: float | None = None
     peak_before_exit_pct: float = 0.0
     bars_held: int = 0
+    # Diagnostics for adaptive / MFE analysis
+    time_to_activation_min: float | None = None
+    time_to_peak_min: float | None = None
+    milestone_times_min: dict[str, float] | None = None
+    current_trail_distance_pct: float | None = None
+    stop_floor_pct: float | None = None  # min stop as return from entry (profit-lock)
 
     def active_stop(self) -> float:
         if self.trailing_active and self.trailing_stop is not None:
@@ -137,6 +150,121 @@ def _close_leg(
     leg.exit_result = result
 
 
+def _minutes_since(entry_ts: Any, ts: Any) -> float:
+    try:
+        return max(0.0, (pd.Timestamp(ts) - pd.Timestamp(entry_ts)).total_seconds() / 60.0)
+    except Exception:
+        return 0.0
+
+
+def _update_milestones(leg: StrategyLegState, entry_fill: float, high: float, ts: Any) -> None:
+    if entry_fill <= 0:
+        return
+    if leg.milestone_times_min is None:
+        leg.milestone_times_min = {}
+    mins = _minutes_since(leg.entry_ts, ts)
+    peak_ret = (high / entry_fill) - 1.0
+    for label, thr in (("p1", 0.01), ("p1_5", 0.015), ("p2", 0.02), ("p3", 0.03)):
+        if peak_ret >= thr and label not in leg.milestone_times_min:
+            leg.milestone_times_min[label] = mins
+    # peak time: update whenever we make a new peak
+    if leg.peak_price is not None and abs(high - float(leg.peak_price)) < 1e-15:
+        leg.time_to_peak_min = mins
+
+
+def _adaptive_trail_distance(leg: StrategyLegState, entry_fill: float, ts: Any) -> float:
+    """Return current trail distance fraction; never loosens vs prior distance on leg."""
+    mode = leg.spec.adaptive_mode
+    cfg = leg.spec.adaptive_cfg or {}
+    peak = float(leg.highest_since_activation or entry_fill)
+    peak_ret = (peak / entry_fill) - 1.0 if entry_fill > 0 else 0.0
+    base = float(leg.spec.trail_distance_pct or 0.0)
+
+    if mode is None:
+        dist = base
+    elif mode in ("fixed",):
+        dist = base
+    elif mode == "two_stage":
+        # T13
+        if peak_ret >= 0.02:
+            dist = float(cfg.get("trail_at_2pct", 0.0025))
+        elif peak_ret >= 0.015:
+            dist = float(cfg.get("trail_at_1_5pct", 0.005))
+        else:
+            dist = float(cfg.get("trail_initial", 0.0075))
+    elif mode == "profit_lock":
+        # T14 — distance stays initial; floors handled separately
+        dist = float(cfg.get("trail_initial", 0.0075))
+    elif mode == "progressive":
+        # T15
+        if peak_ret >= 0.03:
+            dist = 0.0025
+        elif peak_ret >= 0.02:
+            dist = 0.0035
+        elif peak_ret >= 0.015:
+            dist = 0.0045
+        elif peak_ret >= 0.01:
+            dist = 0.006
+        else:
+            dist = 0.0075
+    elif mode == "break_even_then_tight":
+        # T18 after BE: stages by peak
+        if peak_ret >= 0.02:
+            dist = 0.0025
+        elif peak_ret >= 0.0125:
+            dist = 0.005
+        else:
+            dist = float(cfg.get("trail_after_be", 0.0075))
+    elif mode == "mfe_responsive":
+        # T19
+        if peak_ret >= 0.03:
+            dist = 0.0025
+        elif peak_ret >= 0.02:
+            dist = 0.004
+        elif peak_ret >= 0.01:
+            dist = 0.006
+        else:
+            dist = 0.0075
+    elif mode == "time_adaptive":
+        # T20
+        mins = _minutes_since(leg.entry_ts, ts)
+        if mins <= 3.0:
+            dist = 0.0075
+        elif mins <= 7.0:
+            dist = 0.005
+        else:
+            dist = 0.0025
+    else:
+        dist = base
+
+    # Never loosen trail distance once tightened
+    prev = leg.current_trail_distance_pct
+    if prev is not None and dist > float(prev) + 1e-15:
+        dist = float(prev)
+    leg.current_trail_distance_pct = dist
+    return dist
+
+
+def _apply_stop_floors(leg: StrategyLegState, entry_fill: float) -> None:
+    """Raise trailing_stop to profit-lock floors when configured (never lower)."""
+    mode = leg.spec.adaptive_mode
+    cfg = leg.spec.adaptive_cfg or {}
+    if mode != "profit_lock" or entry_fill <= 0:
+        return
+    peak = float(leg.highest_since_activation or entry_fill)
+    peak_ret = (peak / entry_fill) - 1.0
+    floor_pct = None
+    if peak_ret >= 0.02:
+        floor_pct = float(cfg.get("floor_at_2pct", 0.0075))
+    elif peak_ret >= 0.015:
+        floor_pct = float(cfg.get("floor_at_1_5pct", 0.0025))
+    if floor_pct is None:
+        return
+    leg.stop_floor_pct = max(float(leg.stop_floor_pct or -1.0), floor_pct)
+    floor_px = entry_fill * (1.0 + float(leg.stop_floor_pct))
+    leg.trailing_stop = max(float(leg.trailing_stop or 0.0), floor_px)
+
+
 def process_bar_on_leg(
     leg: StrategyLegState,
     *,
@@ -160,48 +288,72 @@ def process_bar_on_leg(
         bar_mae = (low / entry_fill) - 1.0
         leg.mfe_pct = max(leg.mfe_pct, bar_mfe)
         leg.mae_pct = min(leg.mae_pct, bar_mae)
+        new_peak = leg.peak_price is None or high >= float(leg.peak_price)
         leg.peak_price = high if leg.peak_price is None else max(leg.peak_price, high)
         leg.trough_price = low if leg.trough_price is None else min(leg.trough_price, low)
         leg.peak_before_exit_pct = max(leg.peak_before_exit_pct, bar_mfe)
+        if new_peak:
+            _update_milestones(leg, entry_fill, high, ts)
     stop = leg.active_stop()
 
-    # Trailing activation / ratchet (Strategy 3)
+    # Trailing activation / ratchet
     #
-    # Same-candle trailing documentation:
-    # Within one 15m OHLC bar we only observe high/low, not path order.
-    # Order applied here: (1) activate trail if high >= activation,
-    # (2) ratchet trail to high, (3) evaluate stops/TP on this bar.
-    # If both the active stop (initial SL or trailing) and TP are touched
-    # in the same bar, assume SL/TRAILING_STOP first (conservative).
+    # Conservative trail-vs-SL rule (before trail is active):
+    # If this bar touches BOTH trail activation (high) AND the initial hard SL
+    # (low), assume SL occurred first — close as STOP_LOSS and do not activate.
     was_trailing = leg.trailing_active
-    if (
-        leg.spec.trail_activation_pct is not None
-        and leg.spec.trail_distance_pct is not None
-        and not leg.trailing_active
-    ):
-        activation = float(leg.position["entry_fill_price"]) * (1.0 + leg.spec.trail_activation_pct)
+    has_trail = leg.spec.trail_activation_pct is not None and (
+        leg.spec.trail_distance_pct is not None or leg.spec.adaptive_mode is not None
+    )
+    if has_trail and not leg.trailing_active:
+        activation = float(leg.position["entry_fill_price"]) * (1.0 + float(leg.spec.trail_activation_pct))
+        initial_sl = float(leg.initial_sl)
+        if high >= activation and low <= initial_sl:
+            _close_leg(
+                leg,
+                exit_mid=initial_sl,
+                btc_usdt=btc_usdt,
+                costs=costs,
+                exit_ts=ts,
+                reason="STOP_LOSS_TRAIL_ACTIVATION_SAME_CANDLE",
+            )
+            return True
         if high >= activation:
             leg.trailing_active = True
             leg.highest_since_activation = high
-            leg.trailing_stop = high * (1.0 - leg.spec.trail_distance_pct)
             leg.trail_activation_ts = ts
             leg.activation_return_pct = (high / entry_fill - 1.0) if entry_fill > 0 else None
+            leg.time_to_activation_min = _minutes_since(leg.entry_ts, ts)
+            mode = leg.spec.adaptive_mode
+            if mode == "break_even_then_tight":
+                # T18: at activation move stop to ~break-even (entry fill)
+                leg.trailing_stop = float(entry_fill)
+                leg.current_trail_distance_pct = float((leg.spec.adaptive_cfg or {}).get("trail_after_be", 0.0075))
+            else:
+                dist = _adaptive_trail_distance(leg, entry_fill, ts)
+                if dist <= 0 and leg.spec.trail_distance_pct is not None:
+                    dist = float(leg.spec.trail_distance_pct)
+                leg.trailing_stop = high * (1.0 - dist)
+            _apply_stop_floors(leg, entry_fill)
             stop = leg.active_stop()
 
     if leg.trailing_active:
         if high > (leg.highest_since_activation or 0.0):
             leg.highest_since_activation = high
-            new_stop = high * (1.0 - float(leg.spec.trail_distance_pct or 0.0))
-            # Never move trailing stop downward
-            leg.trailing_stop = max(float(leg.trailing_stop or 0.0), new_stop)
-            stop = leg.active_stop()
+        dist = _adaptive_trail_distance(leg, entry_fill, ts)
+        if dist <= 0 and leg.spec.trail_distance_pct is not None:
+            dist = float(leg.spec.trail_distance_pct)
+        peak = float(leg.highest_since_activation or high)
+        new_stop = peak * (1.0 - dist)
+        leg.trailing_stop = max(float(leg.trailing_stop or 0.0), new_stop)
+        _apply_stop_floors(leg, entry_fill)
+        stop = leg.active_stop()
 
     hit_sl = low <= stop
     hit_tp = leg.tp is not None and high >= float(leg.tp)
     trail_exit = leg.trailing_active and hit_sl
 
     if hit_sl and hit_tp:
-        # Conservative: stop first when order unknown
         if trail_exit:
             reason = "TRAILING_STOP_SAME_CANDLE_CONFLICT"
         else:
@@ -359,4 +511,13 @@ def leg_to_record(leg: StrategyLegState, opportunity_id: str) -> dict[str, Any]:
         "activation_return_pct": leg.activation_return_pct,
         "peak_before_exit_pct": float(leg.peak_before_exit_pct),
         "realized_fraction_of_mfe": mfe_frac,
+        "time_to_activation_min": leg.time_to_activation_min,
+        "time_to_peak_min": leg.time_to_peak_min,
+        "time_to_p1_min": (leg.milestone_times_min or {}).get("p1"),
+        "time_to_p1_5_min": (leg.milestone_times_min or {}).get("p1_5"),
+        "time_to_p2_min": (leg.milestone_times_min or {}).get("p2"),
+        "time_to_p3_min": (leg.milestone_times_min or {}).get("p3"),
+        "adaptive_mode": leg.spec.adaptive_mode,
+        "final_trail_distance_pct": leg.current_trail_distance_pct,
+        "stop_floor_pct": leg.stop_floor_pct,
     }

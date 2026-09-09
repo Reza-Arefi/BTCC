@@ -1,0 +1,25 @@
+# Minimal sim shell — required by btcc.sim.config.load_sim_config
+# Live-window T1 compare overrides most fields in-process.
+sim:
+  allow_trading: false
+  telegram: OFF
+  fee_rate_per_side: 0.0
+  slippage_rate_per_side: 0.0
+  same_candle_conflict: assume_sl_first
+  primary_horizon_hours: 4
+  starting_capital_usd: 612.0
+  notional_usd: 76.5
+  compound_portfolio: false
+  max_open_opportunities: 8
+  one_opportunity_per_pair: true
+  long_threshold: 0.65
+  upper_threshold: null
+  btc_d:
+    enabled: false
+  btc_d_health:
+    require_for_new_trades: false
+  data_health:
+    max_candle_age_seconds: 86400
+    min_relative_bars: 100
+  storage:
+    root: data/sim

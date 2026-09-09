@@ -1,0 +1,14 @@
+# Minimal backtest shell — required by btcc.backtest.config.load_backtest_config
+signal_config: configs/signal_config.yaml
+
+backtest:
+  interval: 15m
+  days: 3
+  min_warmup_bars: 1000
+
+data:
+  candle_dir: data/backtest_candles_binance
+  dominance_cache: data/dominance_cache
+
+output:
+  results_root: results

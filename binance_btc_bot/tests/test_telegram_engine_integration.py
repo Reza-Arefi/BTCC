@@ -45,7 +45,7 @@ class TestTelegramEngineIntegration(unittest.TestCase):
         self.cfg.setdefault("live", {})
         self.cfg["live"]["enabled"] = False
         self.cfg["live"]["dry_run"] = True
-        self.cfg["live"]["strategy"] = "T1"
+        self.cfg["live"]["strategy"] = "T4"
         self.cfg["live"]["selector"] = None
         self.cfg.setdefault("storage", {})
         self.cfg["storage"]["sqlite_path"] = "bot.sqlite3"
@@ -102,11 +102,11 @@ class TestTelegramEngineIntegration(unittest.TestCase):
         )
         self._uid = 10_000
 
-        # Baseline: T1 / NONE / 8
-        self.assertEqual(self.ctrl.state.strategy, "T1")
+        # Baseline: T4 / NONE / 8
+        self.assertEqual(self.ctrl.state.strategy, "T4")
         self.assertEqual(self.ctrl.state.selector, "NONE")
         self.assertEqual(self.ctrl.state.max_simultaneous_trades, 8)
-        self._assert_engine_runtime("T1", None, 8)
+        self._assert_engine_runtime("T4", None, 8)
 
     def tearDown(self) -> None:
         try:

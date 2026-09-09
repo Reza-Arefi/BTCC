@@ -3,12 +3,12 @@
 HARD RULES
 ----------
 * Default on-disk YAML stays LIVE=false / DRY_RUN=true / max=8.
-* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, T1, NONE, max=8,
+* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, T4, NONE, max=8,
   allocation 12.5%, total cap 100% (8 × 12.5%).
 * Preflight never places real orders and never auto-arms.
 * Arm only via --live3-arm --authorize-live after LIVE_3_PREFLIGHT=PASS
   with BINANCE_LIVE3_AUTHORIZED=true.
-* Strategy / scoring / T1 geometry / risk formulas are not modified.
+* Strategy / scoring / frozen T4 geometry / risk formulas are not modified.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from binance_btc_bot.config_loader import load_config
+from binance_btc_bot.config_loader import FROZEN_STRATEGIES, load_config
 from binance_btc_bot.control.runtime import (
     OperatorMode,
     RuntimeControlState,
@@ -45,6 +45,8 @@ LIVE3_TOTAL_CAP = 1.0  # 8 × 12.5%
 LIVE3_THRESHOLD = 0.65
 LIVE3_RISK = 0.005
 LIVE3_PREVIOUS_MAX = 3  # Stage-7 hard cap (for one-shot CONFIG UPDATED notify)
+LIVE3_STRATEGY = "T4"
+LIVE3_STRATEGY_GEOM = FROZEN_STRATEGIES[LIVE3_STRATEGY]
 
 
 def build_live3_target_config(base: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -53,7 +55,7 @@ def build_live3_target_config(base: dict[str, Any] | None = None) -> dict[str, A
     live = dict(cfg.get("live") or {})
     live["enabled"] = True
     live["dry_run"] = False
-    live["strategy"] = "T1"
+    live["strategy"] = LIVE3_STRATEGY
     live["selector"] = None
     live["max_open_positions"] = LIVE3_MAX
     live.pop("first_trade_oneshot", None)
@@ -198,12 +200,12 @@ class Live3PreflightReport:
 
 
 def seed_live3_runtime_state(db_path: str | Path) -> Path:
-    """Persist Telegram runtime initial state: RUNNING / T1 / NONE / max=LIVE3_MAX."""
+    """Persist Telegram runtime initial state: RUNNING / T4 / NONE / max=LIVE3_MAX."""
     path = default_runtime_state_path(db_path)
     store = RuntimeStateStore(path)
     state = RuntimeControlState(
         mode=OperatorMode.RUNNING.value,
-        strategy="T1",
+        strategy=LIVE3_STRATEGY,
         selector="NONE",
         max_simultaneous_trades=LIVE3_MAX,
     )
@@ -229,7 +231,7 @@ def format_live3_config_updated_message(
         [
             "⚙️ CONFIGURATION UPDATED",
             "────────────────",
-            "Strategy: T1",
+            f"Strategy: {LIVE3_STRATEGY}",
             "Selector: NONE",
             f"Max simultaneous trades: {int(old_max)} → {int(new_max)}",
             f"Allocation/trade: {float(allocation) * 100:.1f}%",
@@ -285,21 +287,24 @@ def run_live3_preflight(
     # --- Gates 1–8: target configuration ---
     out.add(1, "LIVE=true", "PASS" if live.get("enabled") is True else "FAIL", f"enabled={live.get('enabled')}")
     out.add(2, "DRY_RUN=false", "PASS" if live.get("dry_run") is False else "FAIL", f"dry_run={live.get('dry_run')}")
-    strat_ok = str(live.get("strategy") or "").upper() == "T1"
-    t1_detail = ""
+    strat_ok = str(live.get("strategy") or "").upper() == LIVE3_STRATEGY
+    strat_detail = ""
     try:
-        t1 = get_strategy("T1", target.get("strategies"))
+        sl, act, dist = LIVE3_STRATEGY_GEOM
+        strat = get_strategy(LIVE3_STRATEGY, target.get("strategies"))
         geom_ok = (
-            abs(t1.activation - 0.0075) < 1e-12
-            and abs(t1.trail_distance - 0.0025) < 1e-12
-            and abs(t1.arm_sl_activation_trail - 0.0075) < 1e-12
+            abs(strat.activation - act) < 1e-12
+            and abs(strat.trail_distance - dist) < 1e-12
+            and abs(strat.arm_sl_activation_trail - sl) < 1e-12
         )
-        t1_detail = f"act={t1.activation} trail={t1.trail_distance} sl={t1.arm_sl_activation_trail}"
+        strat_detail = (
+            f"act={strat.activation} trail={strat.trail_distance} sl={strat.arm_sl_activation_trail}"
+        )
         strat_ok = strat_ok and geom_ok
     except Exception as e:  # noqa: BLE001
         strat_ok = False
-        t1_detail = scrub_exception(e)
-    out.add(3, "strategy=T1", "PASS" if strat_ok else "FAIL", t1_detail)
+        strat_detail = scrub_exception(e)
+    out.add(3, f"strategy={LIVE3_STRATEGY}", "PASS" if strat_ok else "FAIL", strat_detail)
     sel = live.get("selector")
     out.add(
         4,
@@ -429,6 +434,9 @@ def run_live3_preflight(
             if st_t in {"PROTECTED", "PROTECTED_EMERGENCY", "DRY_RUN_PROTECTED"} and t.get(
                 "binance_oco_list_id"
             ):
+                expected_open.append(t)
+            elif st_t == "PROTECTED_EMERGENCY":
+                # Emergency STOP_LOSS path has no OCO list id; still a known open trade.
                 expected_open.append(t)
             elif st_t in {"PROTECTION_FAILED", "ENTRY_FILLED", "PROTECTION_PENDING", "OPEN"}:
                 stale_bad.append(t)
@@ -649,7 +657,7 @@ def run_live3_preflight(
                 out.probe_summary["runtime_max_before_seed"] = prev
                 path = seed_live3_runtime_state(engine.db.path)
                 out.notes.append(
-                    f"runtime state seeded RUNNING/T1/NONE/max={LIVE3_MAX} at {path}"
+                    f"runtime state seeded RUNNING/{LIVE3_STRATEGY}/NONE/max={LIVE3_MAX} at {path}"
                 )
             except Exception as e:  # noqa: BLE001
                 out.notes.append(f"runtime seed failed: {scrub_exception(e)}")
@@ -758,7 +766,7 @@ class Live3Session:
         out = Live3ArmReport()
         out.notes.append(
             f"LIVE-3: max={LIVE3_MAX} alloc=12.5% total_cap={LIVE3_TOTAL_CAP * 100:.0f}% "
-            "T1 selector=NONE"
+            f"{LIVE3_STRATEGY} selector=NONE"
         )
         out.notes.append("production YAML not rewritten — live overlay is in-memory only")
         out.notes.append("no demo/forced signals; wait for genuine S crosses")
@@ -796,7 +804,7 @@ class Live3Session:
             return out
 
         live_cfg = build_live3_target_config(self.base_cfg)
-        out.strategy = "T1"
+        out.strategy = LIVE3_STRATEGY
         out.selector = "NONE"
         out.max_simultaneous_trades = LIVE3_MAX
         out.events.append("LIVE3_CONFIG_OVERLAY_READY")
@@ -901,7 +909,8 @@ class Live3Session:
                     out.events.append(f"CONFIG_UPDATED:{prev_i}->{LIVE3_MAX}")
                 engine.notifications.notify_info(
                     "LIVE3_ARMED",
-                    f"LIVE-3 armed: LIVE=true DRY_RUN=false strategy=T1 selector=NONE max={LIVE3_MAX}. "
+                    f"LIVE-3 armed: LIVE=true DRY_RUN=false strategy={LIVE3_STRATEGY} "
+                    f"selector=NONE max={LIVE3_MAX}. "
                     "Waiting for genuine crosses. No forced entries.",
                 )
             except Exception:  # noqa: BLE001

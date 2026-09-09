@@ -26,7 +26,7 @@ class StrategyProvider(ABC):
 
 
 class FixedStrategyProvider(StrategyProvider):
-    """Initial live provider: fixed trail strategy from config (currently T1).
+    """Initial live provider: fixed trail strategy from config (currently T4).
 
     Selectors A–F are intentionally not used. A future SelectorStrategyProvider
     can replace this without changing the execution engine.
@@ -34,7 +34,7 @@ class FixedStrategyProvider(StrategyProvider):
 
     def __init__(
         self,
-        strategy_key: str = "T1",
+        strategy_key: str = "T4",
         *,
         strategies_cfg: Mapping[str, Any] | None = None,
         selector_key: str | None = None,
@@ -67,7 +67,7 @@ def build_strategy_provider(cfg: Mapping[str, Any]) -> StrategyProvider:
     returns a mutable RuntimeStrategyProvider for NEW entries only.
     """
     live = cfg.get("live") or {}
-    key = str(live.get("strategy") or "T1").upper()
+    key = str(live.get("strategy") or "T4").upper()
     selector = live.get("selector")
     if selector in ("null", "NONE", ""):
         selector = None

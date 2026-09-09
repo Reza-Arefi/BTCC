@@ -28,7 +28,8 @@ def compute_all_factors(
     ``factor_weights`` overrides config weights when a Champion model is active.
     Indicator architecture is unchanged; only the factor-group mix may adapt.
     """
-    mom = momentum_factor(alt_btc, interval)
+    mom_profile = str((cfg.get("factors") or {}).get("momentum_profile") or "base")
+    mom = momentum_factor(alt_btc, interval, profile=mom_profile)
     trend = trend_factor(alt_btc)
     regime = btc_regime_factor(btc_usdt, dominance_pct, dom_changes, interval)
     volu = volume_factor(alt_usdt, alt_btc)

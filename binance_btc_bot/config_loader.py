@@ -80,8 +80,10 @@ def load_config(path: Path | str | None = None) -> dict[str, Any]:
 
 def _validate_config(cfg: dict[str, Any]) -> None:
     live = cfg.get("live") or {}
-    if str(live.get("strategy", "")).upper() != "T1":
-        raise ValueError("live.strategy must be T1 for the initial Binance bot")
+    strategy = str(live.get("strategy", "")).upper()
+    allowed_live = frozenset(FROZEN_STRATEGIES.keys())
+    if strategy not in allowed_live:
+        raise ValueError(f"live.strategy must be one of {sorted(allowed_live)}")
     if live.get("selector") not in (None, "null", ""):
         raise ValueError("live.selector must be null (selectors not enabled live)")
     if bool((cfg.get("risk") or {}).get("no_leverage", True)) is not True:
@@ -151,4 +153,4 @@ def is_live_trading_enabled(cfg: dict[str, Any]) -> bool:
 
 
 def live_strategy_key(cfg: dict[str, Any]) -> str:
-    return str((cfg.get("live") or {}).get("strategy") or "T1").upper()
+    return str((cfg.get("live") or {}).get("strategy") or "T4").upper()

@@ -2382,8 +2382,11 @@ class OrderLifecycle:
                         continue
                     cid = str(o.get("clientOrderId") or "")
                     otype = str(o.get("type") or o.get("orderType") or "").upper()
+                    emergency_cid = cid.startswith(("es_", "es2_", "es3_", "em_")) or cid.startswith(
+                        "es_"
+                    )
                     if cid in {em_stop, em_oco} or (
-                        otype in {"STOP_LOSS", "STOP_LOSS_LIMIT"} and cid.startswith("es_")
+                        otype in {"STOP_LOSS", "STOP_LOSS_LIMIT"} and emergency_cid
                     ):
                         stop_hit = o
                         break

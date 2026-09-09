@@ -438,6 +438,12 @@ def build_production_score_provider(
     signal = dict(cfg.get("signal") or {})
     path = signal.get("signal_config_path") or "configs/signal_config.yaml"
     signal_cfg = load_signal_config(path)
+    # Live bot may override momentum profile (e.g. e2) without mutating research YAML.
+    mom_profile = signal.get("momentum_profile")
+    if mom_profile:
+        factors = dict(signal_cfg.get("factors") or {})
+        factors["momentum_profile"] = str(mom_profile).strip().lower()
+        signal_cfg = {**signal_cfg, "factors": factors}
     entry = cfg.get("entry") or {}
     thr = float(entry.get("long_threshold") or signal.get("long_threshold") or DEFAULT_THRESHOLD)
     diag = bool(signal.get("diagnostics", False)) if diagnostics is None else bool(diagnostics)

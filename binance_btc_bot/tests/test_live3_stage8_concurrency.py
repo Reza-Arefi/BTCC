@@ -188,9 +188,13 @@ class TestStage8MaxEight(unittest.TestCase):
         cfg = build_live3_target_config()
         self.assertFalse(cfg["live"]["dry_run"])
 
-    def test_15_t1_unchanged(self):
+    def test_15_live_t4_and_frozen_t1_geometry(self):
         cfg = build_live3_target_config()
-        self.assertEqual(cfg["live"]["strategy"], "T1")
+        self.assertEqual(cfg["live"]["strategy"], "T4")
+        t4 = get_strategy("T4")
+        self.assertAlmostEqual(t4.activation, 0.02)
+        self.assertAlmostEqual(t4.trail_distance, 0.005)
+        self.assertAlmostEqual(t4.arm_sl_activation_trail, 0.02)
         t1 = get_strategy("T1")
         self.assertAlmostEqual(t1.activation, 0.0075)
         self.assertAlmostEqual(t1.trail_distance, 0.0025)
@@ -214,6 +218,7 @@ class TestStage8MaxEight(unittest.TestCase):
         self.assertTrue(pm.try_reserve("DOTBTC").ok)
         msg = format_live3_config_updated_message(old_max=3, new_max=8)
         self.assertIn("12.5%", msg)
+        self.assertIn("Strategy: T4", msg)
         self.assertAlmostEqual(LIVE3_ALLOC, 0.125)
         self.assertAlmostEqual(LIVE3_RISK, 0.005)
         self.assertAlmostEqual(LIVE3_THRESHOLD, 0.65)

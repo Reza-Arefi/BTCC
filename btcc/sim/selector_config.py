@@ -13,8 +13,8 @@ from btcc.sim.config import load_sim_config
 ROOT = Path(__file__).resolve().parents[2]
 SELECTOR_CFG_PATH = ROOT / "configs" / "selector_experiment_config.yaml"
 
-FIXED_STRATEGY_KEYS = tuple(f"trail_{i}" for i in range(1, 13))
-FIXED_ARM_LABELS = tuple(f"T{i}" for i in range(1, 13))
+FIXED_STRATEGY_KEYS = tuple(f"trail_{i}" for i in range(1, 21))
+FIXED_ARM_LABELS = tuple(f"T{i}" for i in range(1, 21))
 SELECTOR_ARM_LABELS = ("A", "B", "C", "D", "E", "F")
 ALL_ARM_LABELS = FIXED_ARM_LABELS + SELECTOR_ARM_LABELS
 SELECTOR_IDS = tuple(f"selector_{c.lower()}" for c in SELECTOR_ARM_LABELS)
@@ -63,7 +63,7 @@ def _label_for_key(key: str) -> str:
 
 
 def active_fixed_strategy_keys(sim: dict[str, Any] | None = None) -> tuple[str, ...]:
-    """Ordered trail_* keys present in the experiment config (excludes absent T11/T12)."""
+    """Ordered trail_* keys present in the experiment config."""
     if sim is None:
         return FIXED_STRATEGY_KEYS
     strategies = sim.get("strategies") or {}
@@ -74,7 +74,14 @@ def active_fixed_strategy_keys(sim: dict[str, Any] | None = None) -> tuple[str, 
         explicit = se.get("counterfactual_strategy_keys") or se.get("fixed_strategy_keys")
         if explicit:
             keys = [str(k) for k in explicit]
-    return tuple(keys)
+    # Include any trail_N beyond the built-in range that appear in strategies
+    extras = [
+        k
+        for k in strategies
+        if str(k).startswith("trail_") and k not in keys
+    ]
+    extras.sort(key=lambda x: int(str(x).split("_")[1]))
+    return tuple(keys + extras)
 
 
 def active_fixed_arm_labels(sim: dict[str, Any] | None = None) -> tuple[str, ...]:
@@ -176,8 +183,10 @@ def validate_selector_experiment(sim: dict[str, Any]) -> list[str]:
         if raw.get("take_profit_pct") is not None:
             errors.append(f"{key} must not have take_profit_pct")
         trail = raw.get("trailing") or {}
-        if trail.get("activation_pct") is None or trail.get("distance_pct") is None:
-            errors.append(f"{key} trailing activation/distance required")
+        if trail.get("activation_pct") is None:
+            errors.append(f"{key} trailing activation required")
+        if trail.get("distance_pct") is None and not raw.get("adaptive_mode"):
+            errors.append(f"{key} trailing distance required (or adaptive_mode)")
     allow_thr = bool(sim.get("allow_threshold_override") or se.get("allow_threshold_override"))
     thr = float(sim.get("long_threshold", -1))
     if not allow_thr and thr != 0.60:

@@ -125,12 +125,20 @@ def _scores_ewma(
     history: CounterfactualHistory,
     asof: pd.Timestamp,
     half_life_days: float,
+    strategy_keys: tuple[str, ...] | None = None,
 ) -> dict[str, float]:
+    keys = strategy_keys or FIXED_STRATEGY_KEYS
     hl = half_life_days * 86400.0
-    return {k: _ewma(_strategy_returns(history, k, asof), asof, hl) for k in FIXED_STRATEGY_KEYS}
+    return {k: _ewma(_strategy_returns(history, k, asof), asof, hl) for k in keys}
 
 
-def _scores_multi_horizon(history: CounterfactualHistory, asof: pd.Timestamp, cfg: dict[str, Any]) -> dict[str, float]:
+def _scores_multi_horizon(
+    history: CounterfactualHistory,
+    asof: pd.Timestamp,
+    cfg: dict[str, Any],
+    strategy_keys: tuple[str, ...] | None = None,
+) -> dict[str, float]:
+    keys = strategy_keys or FIXED_STRATEGY_KEYS
     w = cfg.get("weights") or {}
     w4 = float(w.get("h4", 0.15))
     w1 = float(w.get("d1", 0.30))
@@ -139,7 +147,7 @@ def _scores_multi_horizon(history: CounterfactualHistory, asof: pd.Timestamp, cf
     hl1 = float(cfg.get("half_life_days_1d", 1)) * 86400.0
     hl7 = float(cfg.get("half_life_days_7d", 7)) * 86400.0
     out: dict[str, float] = {}
-    for k in FIXED_STRATEGY_KEYS:
+    for k in keys:
         rets = _strategy_returns(history, k, asof)
         q = (
             w4 * _ewma(rets, asof, hl4)
@@ -158,10 +166,12 @@ def _scores_regime(
     half_life_days: float,
     min_obs: int,
     fallback: dict[str, float],
+    strategy_keys: tuple[str, ...] | None = None,
 ) -> dict[str, float]:
+    keys = strategy_keys or FIXED_STRATEGY_KEYS
     hl = half_life_days * 86400.0
     out: dict[str, float] = {}
-    for k in FIXED_STRATEGY_KEYS:
+    for k in keys:
         prior = history.prior(k, asof, regime=regime)
         if len(prior) >= min_obs:
             rets = [(t.exit_ts, t.pnl_pct) for t in prior]
@@ -217,10 +227,12 @@ def _scores_downside_aware(
     *,
     half_life_days: float,
     downside_lambda: float,
+    strategy_keys: tuple[str, ...] | None = None,
 ) -> dict[str, float]:
+    keys = strategy_keys or FIXED_STRATEGY_KEYS
     hl = half_life_days * 86400.0
     out: dict[str, float] = {}
-    for k in FIXED_STRATEGY_KEYS:
+    for k in keys:
         rets = _strategy_returns(history, k, asof)
         r = _ewma(rets, asof, hl)
         neg = [(ts, abs(v)) for ts, v in rets if v < 0]
@@ -261,28 +273,31 @@ class SelectorState:
         lb = self.lookback_days
         keys = strategy_keys
         if self.kind == "ewma_7d":
-            return _scores_ewma(history, asof, float(se.get("half_life_days", 7)))
+            return _scores_ewma(history, asof, float(se.get("half_life_days", 7)), strategy_keys=keys)
         if self.kind == "multi_horizon_ewma":
-            return _scores_multi_horizon(history, asof, se)
+            return _scores_multi_horizon(history, asof, se, strategy_keys=keys)
         if self.kind == "regime_conditional":
-            fb = _scores_ewma(history, asof, float(se.get("half_life_days", 7)))
+            fb = _scores_ewma(history, asof, float(se.get("half_life_days", 7)), strategy_keys=keys)
             return _scores_regime(
                 history, asof, regime,
                 half_life_days=float(se.get("half_life_days", 7)),
                 min_obs=int(se.get("min_regime_observations", 5)),
                 fallback=fb,
+                strategy_keys=keys,
             )
         if self.kind == "recent_plus_regime":
-            recent = _scores_ewma(history, asof, float(se.get("half_life_days", 7)))
+            recent = _scores_ewma(history, asof, float(se.get("half_life_days", 7)), strategy_keys=keys)
             regime_s = _scores_regime(
                 history, asof, regime,
                 half_life_days=float(se.get("half_life_days", 7)),
                 min_obs=int(se.get("min_regime_observations", 5)),
                 fallback=recent,
+                strategy_keys=keys,
             )
             wr = float(se.get("recent_weight", 0.65))
             wg = float(se.get("regime_weight", 0.35))
-            return {k: wr * recent[k] + wg * regime_s[k] for k in FIXED_STRATEGY_KEYS}
+            use_keys = keys or FIXED_STRATEGY_KEYS
+            return {k: wr * recent[k] + wg * regime_s[k] for k in use_keys}
         if self.kind == "rank_ewma":
             return _scores_rank_ewma(
                 history, asof, float(se.get("half_life_days", 7)),
@@ -293,8 +308,9 @@ class SelectorState:
                 history, asof,
                 half_life_days=float(se.get("half_life_days", 7)),
                 downside_lambda=float(se.get("downside_lambda", 0.5)),
+                strategy_keys=keys,
             )
-        return _scores_ewma(history, asof, 7.0)
+        return _scores_ewma(history, asof, 7.0, strategy_keys=keys)
 
     def select(
         self,

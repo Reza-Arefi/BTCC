@@ -53,7 +53,7 @@ class PendingConfirmation:
 class RuntimeControlState:
     version: int = RUNTIME_STATE_VERSION
     mode: str = OperatorMode.RUNNING.value
-    strategy: str = "T1"
+    strategy: str = "T4"
     selector: str = "NONE"
     max_simultaneous_trades: int = 8
     corrupt: bool = False
@@ -101,7 +101,7 @@ class RuntimeControlState:
         ver = int(raw.get("version") or 0)
         if ver != RUNTIME_STATE_VERSION:
             raise ValueError(f"unsupported runtime state version {ver}")
-        strategy = str(raw.get("strategy") or "T1").upper()
+        strategy = str(raw.get("strategy") or "T4").upper()
         selector = str(raw.get("selector") or "NONE").upper()
         if selector in ("", "NULL", "NONE"):
             selector = "NONE"
@@ -184,14 +184,14 @@ class RuntimeStrategyProvider(StrategyProvider):
 
     def __init__(
         self,
-        strategy_key: str = "T1",
+        strategy_key: str = "T4",
         *,
         selector_key: str | None = None,
         strategies_cfg: Any = None,
     ) -> None:
         self._strategies_cfg = strategies_cfg
         self._lock = threading.RLock()
-        self._strategy = "T1"
+        self._strategy = "T4"
         self._selector: str | None = None
         self.set_strategy(strategy_key)
         self.set_selector(selector_key)

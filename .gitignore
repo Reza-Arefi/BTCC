@@ -12,9 +12,19 @@
 __pycache__/
 *.py[cod]
 *.sqlite3
-data/
+/data/
 binance_btc_bot/logs/
 *.log
+logs/
+
+# Heavy backtest dumps (keep decision/report/ranking/plots)
+**/strategy_legs.csv
+**/strategy_legs_E2.csv
+**/selector_legs.csv
+**/opportunities.csv
+**/selection_audit.csv
+**/winner_trades_*.csv
+results/stage1_entry_90d_1s_20260910_114135/
 
 # OS / editor
 Thumbs.db

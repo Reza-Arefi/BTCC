@@ -1,0 +1,70 @@
+# E2 + T7 research freeze — candidate settings after Stages 1–4
+# Window: 2026-06-12 → 2026-09-10 UTC (90d; 60d select / 30d holdout)
+# Signals: 15m | Exit sim: 1s | Exchange: Binance spot (research)
+# Full write-up: reports/E2_T7_SELECTION.md
+
+experiment:
+  name: e2_t7_selection
+  days: 90
+  select_days: 60
+  holdout_days: 30
+  signal_interval: 15m
+  exit_interval: 1s
+  long_threshold: 0.65
+  fee_rate_per_side: 0.0          # research; do not assume live matches
+  slippage_rate_per_side: 0.0
+  same_candle_conflict: assume_sl_first
+
+candidate:
+  entry: E2                       # faster momentum profile (early-breakout E2)
+  exit: T7                        # fixed trail — selectors A–F rejected in Stage 3
+  selector: null
+
+# T7 geometry (from binance_btc_bot/config/binance_bot.yaml strategies.T7)
+exit_geometry:
+  name: T7
+  stop_loss_pct: 0.02             # 2.0%
+  activation_pct: 0.02            # 2.0%
+  trail_distance_pct: 0.005       # 0.5%
+
+# Conservative paper/live size (recommended default)
+portfolio_conservative:
+  allocation_per_trade: 0.125     # 12.5%
+  max_simultaneous_trades: 8
+  max_total_allocation: 1.0
+  one_position_per_symbol: true
+
+# Aggressive Stage-4 pick (same edge, roughly 2× size & DD)
+portfolio_aggressive:
+  allocation_per_trade: 0.25      # 25%
+  max_simultaneous_trades: 4
+  max_total_allocation: 1.0
+  one_position_per_symbol: true
+
+# Authoritative for next experiments unless operator overrides
+portfolio: conservative           # conservative | aggressive
+
+entry_scoring:
+  variant: E2
+  # E2 = momentum_factor(..., profile="e2"); other factors BASE unless noted
+  notes:
+    - Stage 1 winner by mean Net BTC across T1–T10 on select
+    - Confirmed on holdout vs BASE/E1/E3/E4/E5
+
+risk:
+  max_loss_per_trade: 0.005       # 0.5% equity planned at hard SL (bot policy)
+  no_leverage: true
+
+decision_summary:
+  stage1_winner_entry: E2
+  stage2_winner_exit: T7
+  stage3_keep_selector: false
+  stage4_aggressive_alloc: 0.25
+  stage4_aggressive_max_open: 4
+  recommended_deploy: conservative
+
+result_refs:
+  stage1: results/stage1_entry_90d_1s_20260910_115513
+  stage2: results/stage2_exit_E2_90d_1s_20260910_155823
+  stage3: results/stage3_selector_E2_T7_90d_1s_20260910_160330
+  stage4: results/stage4_sizing_E2_T7_90d_1s_20260910_160717

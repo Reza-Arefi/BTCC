@@ -1,0 +1,36 @@
+{
+  "stage": 4,
+  "frozen_entry": "E2",
+  "frozen_exit": "T7",
+  "baseline": {
+    "arm": "A12.5_M8",
+    "fraction": 0.125,
+    "max_open": 8,
+    "select_return_pct": 1.7066994399358437,
+    "select_max_dd_pct": -3.0841074284770604,
+    "holdout_return_pct": 6.489585697101896,
+    "holdout_max_dd_pct": -2.7592191980449137
+  },
+  "winner_on_select": {
+    "arm": "A25_M4",
+    "allocation_per_trade": 0.25,
+    "max_open": 4,
+    "select_return_pct": 3.4133988798715764,
+    "select_max_dd_pct": -5.964960732357313,
+    "holdout_return_pct": 13.077381856676018,
+    "holdout_max_dd_pct": -3.9949107184620343
+  },
+  "change_from_baseline": true,
+  "live_candidate": {
+    "entry": "E2",
+    "exit": "T7",
+    "selector": null,
+    "allocation_per_trade": 0.25,
+    "max_simultaneous_trades": 4
+  },
+  "rule": "Pick sizing on 60d select; require holdout return > 0 and DD not >1.5\u00d7 baseline holdout DD. Prefer baseline if no candidate passes.",
+  "notes": [
+    "E2+T7 stream from Stage 1; max concurrent in raw stream was 8",
+    "pnl_usd = pnl_pct * actual_notional; exposure capped at 100% equity"
+  ]
+}

@@ -1,9 +1,9 @@
-"""21-day Binance multi-arm backtest: T1–T10 + selectors A–F.
+"""90-day Binance multi-arm backtest: T1–T10 + selectors A–F.
 
 Signals/entries: 15m (S >= 0.65, live universe).
-Exits: 1m OHLC trail sim (incl. same-candle trail-activation + hard SL => SL).
+Exits: 1s OHLC trail sim (full-window 1s tape; day-partitioned cache).
 
-Saves results + plots under results/multiarm_1m_21d_*/.
+Saves results + plots under results/multiarm_1s_90d_*/.
 Does not place orders or touch the live process.
 """
 
@@ -28,15 +28,15 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 CANDLE_DIR = REPO / "data" / "backtest_candles_binance"
 SIGNAL_INTERVAL = "15m"
-EXIT_INTERVAL = "1m"
+EXIT_INTERVAL = "1s"
 WARMUP_BARS = 1000
-DAYS = 21
+DAYS = 90
 STARTING_CAPITAL_USD = 1000.0
 NOTIONAL_USD = 125.0  # 12.5% of starting capital
 MAX_OPEN = 8
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("multiarm_1m_21d")
+logger = logging.getLogger("multiarm_1s_90d")
 
 
 def _utc(ts) -> pd.Timestamp:
@@ -80,7 +80,7 @@ def build_sim() -> dict[str, Any]:
     strategies = t1_t10_strategies()
     sim.update(
         {
-            "experiment_kind": "binance_multiarm_1m_21d",
+            "experiment_kind": "binance_multiarm_1s_90d",
             "long_threshold": 0.65,
             "upper_threshold": None,
             "starting_capital_usd": STARTING_CAPITAL_USD,
@@ -131,10 +131,9 @@ def build_sim() -> dict[str, Any]:
 
 
 def download_candles(bases: list[str], eval_start: pd.Timestamp, eval_end: pd.Timestamp) -> None:
-    """Download 15m (signal) + 1m (exit) candles. Prefer API for 1m (Vision zips often timeout)."""
+    """Download 15m (signal) + full-window 1s (exit) candles from Binance Vision/API."""
     from btcc.backtest.data_loader import compute_window
-    from btcc.data.binance_vision import download_universe, fetch_klines_api, _session, _as_utc
-    from btcc.data.candles import candle_path, load_candles, save_candles
+    from btcc.data.binance_vision import download_universe, _as_utc
 
     data_start, _, _ = compute_window(
         days=DAYS,
@@ -147,80 +146,36 @@ def download_candles(bases: list[str], eval_start: pd.Timestamp, eval_end: pd.Ti
     end = _utc(eval_end) + pd.Timedelta(hours=6)
     symbols = ["BTCUSDT"] + [f"{b}USDT" for b in bases]
     CANDLE_DIR.mkdir(parents=True, exist_ok=True)
+
     logger.info("Downloading %s %s → %s (%d symbols)", SIGNAL_INTERVAL, start_15, end, len(symbols))
     r15 = download_universe(symbols, start=start_15, end=end, interval=SIGNAL_INTERVAL, candle_dir=CANDLE_DIR)
     logger.info("15m ok=%d/%d", sum(1 for v in r15.values() if v.get("ok")), len(r15))
 
-    start_1m = _utc(eval_start) - pd.Timedelta(hours=2)
-    logger.info("Downloading %s via API %s → %s (%d symbols)", EXIT_INTERVAL, start_1m, end, len(symbols))
-    sess = _session()
-    ok = 0
-    for i, sym in enumerate(symbols, 1):
-        path = candle_path(CANDLE_DIR, sym, EXIT_INTERVAL)
-        frames = []
-        cached = load_candles(path)
-        if cached is not None and not cached.empty:
-            frames.append(cached)
-        # Skip Vision monthly zips for 1m (slow/timeouts); API fill the window.
-        need_api = True
-        if cached is not None and not cached.empty:
-            w = cached[(cached["timestamp"] >= _as_utc(start_1m)) & (cached["timestamp"] <= _as_utc(end))]
-            expected = max(1, int((_as_utc(end) - _as_utc(start_1m)).total_seconds() / 60))
-            if len(w) >= expected * 0.90:
-                need_api = False
-        if need_api:
-            for attempt in range(3):
-                try:
-                    api_df = fetch_klines_api(sym, EXIT_INTERVAL, start_1m, end, session=sess, sleep_s=0.03)
-                    if not api_df.empty:
-                        frames.append(api_df)
-                    break
-                except Exception as e:
-                    logger.warning("%s 1m API attempt %d failed: %s", sym, attempt + 1, e)
-                    time.sleep(1.5 * (attempt + 1))
-        if not frames:
-            logger.error("No 1m data for %s", sym)
-            continue
-        out = (
-            pd.concat(frames, ignore_index=True)
-            .drop_duplicates("timestamp", keep="last")
-            .sort_values("timestamp")
-            .reset_index(drop=True)
-        )
-        save_candles(out, path)
-        ok += 1
-        if i % 5 == 0 or i == len(symbols):
-            logger.info("1m progress %d/%d (last=%s n=%d)", i, len(symbols), sym, len(out))
-    logger.info("1m ok=%d/%d", ok, len(symbols))
+    # Full eval window at 1s (plus small pad) — reused later by early-entry experiments
+    start_1s = _utc(eval_start) - pd.Timedelta(hours=2)
+    logger.info("Downloading full-window %s %s → %s (%d symbols)", EXIT_INTERVAL, start_1s, end, len(symbols))
+    r1s = download_universe(
+        symbols,
+        start=start_1s,
+        end=end,
+        interval=EXIT_INTERVAL,
+        candle_dir=CANDLE_DIR,
+        prefer_vision=True,
+        min_coverage=0.90,
+    )
+    logger.info(
+        "1s ok=%d/%d mean_cov=%.1f%%",
+        sum(1 for v in r1s.values() if v.get("ok")),
+        len(r1s),
+        100.0 * (sum(float(v.get("coverage") or 0.0) for v in r1s.values()) / max(1, len(r1s))),
+    )
+    _ = _as_utc  # imported for parity / future gap tools
 
 
-def load_exit_panels(bases: list[str]) -> dict[str, Any]:
-    from btcc.data.candles import candle_path, load_candles
-    from btcc.series.relative import build_alt_btc
+def load_exit_tape(bases: list[str]):
+    from btcc.data.exit_tape_1s import ExitTape1s
 
-    btc = load_candles(candle_path(CANDLE_DIR, "BTCUSDT", EXIT_INTERVAL))
-    if btc is None or btc.empty:
-        raise RuntimeError("Missing BTCUSDT 1m")
-    btc = btc.copy()
-    btc["timestamp"] = pd.to_datetime(btc["timestamp"], utc=True)
-    coins: dict[str, Any] = {}
-    unavailable: list[str] = []
-    for base in bases:
-        alt = load_candles(candle_path(CANDLE_DIR, f"{base}USDT", EXIT_INTERVAL))
-        if alt is None or alt.empty:
-            unavailable.append(base)
-            continue
-        alt = alt.copy()
-        alt["timestamp"] = pd.to_datetime(alt["timestamp"], utc=True)
-        rel = build_alt_btc(alt, btc)
-        if rel is None or rel.empty:
-            unavailable.append(base)
-            continue
-        rel = rel.copy()
-        rel["timestamp"] = pd.to_datetime(rel["timestamp"], utc=True)
-        coins[base] = {"base": base, "symbol": f"{base}USDT", "rel": rel}
-    logger.info("1m exit panels coins=%d unavailable=%s", len(coins), unavailable[:12])
-    return {"btc": btc, "coins": coins, "btc_close": btc.set_index("timestamp")["close"], "unavailable": unavailable}
+    return ExitTape1s(CANDLE_DIR, bases)
 
 
 def build_daily_cap(legs: pd.DataFrame, eval_start: pd.Timestamp) -> pd.DataFrame:
@@ -311,10 +266,10 @@ def plot_summary_bars(summary: pd.DataFrame, out_dir: Path) -> None:
         fig.savefig(out_dir / fname, dpi=130)
         plt.close(fig)
 
-    _bar("net_return_pct_capital", "Net return (% of starting capital) — 21d 1m exits", "net_return_by_arm.png", "Return %")
-    _bar("win_rate_pct", "Win rate by arm — 21d 1m exits", "win_rate_by_arm.png", "Win rate %")
-    _bar("avg_pnl_pct", "Average P/L per trade (%) — 21d 1m exits", "avg_pnl_by_arm.png", "Avg trade %")
-    _bar("trades", "Trade count by arm — 21d 1m exits", "trade_count_by_arm.png", "Trades")
+    _bar("net_return_pct_capital", "Net return (% of starting capital) — 90d 1s exits", "net_return_by_arm.png", "Return %")
+    _bar("win_rate_pct", "Win rate by arm — 90d 1s exits", "win_rate_by_arm.png", "Win rate %")
+    _bar("avg_pnl_pct", "Average P/L per trade (%) — 90d 1s exits", "avg_pnl_by_arm.png", "Avg trade %")
+    _bar("trades", "Trade count by arm — 90d 1s exits", "trade_count_by_arm.png", "Trades")
 
 
 def run() -> Path:
@@ -342,7 +297,7 @@ def run() -> Path:
     eval_end = _utc(datetime.now(timezone.utc)).floor("15min")
     eval_start = eval_end - pd.Timedelta(days=DAYS)
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    out_dir = REPO / "results" / f"multiarm_1m_21d_{run_id}"
+    out_dir = REPO / "results" / f"multiarm_1s_90d_{run_id}"
     plots_dir = out_dir / "plots"
     out_dir.mkdir(parents=True, exist_ok=True)
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -381,15 +336,7 @@ def run() -> Path:
         eval_end=eval_end,
         offline_candles=True,
     )
-    exit_raw = load_exit_panels(bases)
-    exit_panels = {
-        "coins": {
-            base: {**coin, "rel": exit_raw["coins"][base]["rel"]}
-            for base, coin in panels["coins"].items()
-            if base in exit_raw["coins"]
-        }
-    }
-    btc_close_1m = exit_raw["btc_close"]
+    exit_tape = load_exit_tape(bases)
 
     btc_df = panels["btc"].copy()
     btc_df["timestamp"] = pd.to_datetime(btc_df["timestamp"], utc=True)
@@ -441,20 +388,22 @@ def run() -> Path:
         nonlocal max_simultaneous
         done = []
         for oid, opp in open_book.items():
-            coin = exit_panels["coins"].get(opp["base"])
-            if coin is None:
+            base = opp["base"]
+            if not exit_tape.has(base):
                 continue
-            rel = coin["rel"]
             last = _utc(opp.get("last_processed_ts") or opp["entry_fill_ts"])
-            bars = rel[(rel["timestamp"] > last) & (rel["timestamp"] <= asof_t)]
+            bars, btc_close_1s = exit_tape.rel_and_btc_close(base, last, asof_t)
             if bars.empty:
                 continue
             legs_only = [item["leg"] for item in opp["leg_items"]]
+            default_btc = float(btc_close_1s.iloc[-1]) if len(btc_close_1s) else float(
+                exit_tape.btc_close_near(asof_t, default=1.0)
+            )
             process_bars_until_closed(
                 legs_only,
                 bars,
-                btc_usdt_series=btc_close_1m,
-                default_btc_usdt=float(btc_close_1m.iloc[-1]),
+                btc_usdt_series=btc_close_1s,
+                default_btc_usdt=default_btc,
                 costs=costs,
                 same_candle_conflict="assume_sl_first",
             )
@@ -531,7 +480,7 @@ def run() -> Path:
         day_n = day_number_at(t, eval_start)
 
         for base, coin in panels["coins"].items():
-            if base not in exit_panels["coins"]:
+            if not exit_tape.has(base):
                 continue
             rel_full = coin["rel"].copy()
             rel_full["timestamp"] = pd.to_datetime(rel_full["timestamp"], utc=True)
@@ -708,10 +657,11 @@ def run() -> Path:
         "n_coins": len(panels["coins"]),
         "fee_rate_per_side": 0.0,
         "notes": [
-            "15m signals; 1m exits",
+            "15m signals; full-window 1s exits",
             "T1-T10 geometry from binance_bot.yaml",
-            "Same-candle trail activation + hard SL => STOP_LOSS",
+            "Same-candle trail activation + hard SL => STOP_LOSS (rare at 1s)",
             "Selectors A-F choose among T1-T10 using counterfactual history",
+            "1s cache is day-partitioned under data/backtest_candles_binance/1s/",
         ],
     }
 

@@ -1,0 +1,47 @@
+{
+  "frozen_entry": "E2",
+  "eval_start": "2026-06-12 11:45:00+00:00",
+  "eval_end": "2026-09-10 11:45:00+00:00",
+  "select_end": "2026-08-11 11:44:59+00:00",
+  "days": 90,
+  "select_days": 60,
+  "holdout_days": 30,
+  "signal_interval": "15m",
+  "exit_interval": "1s",
+  "n_e2_legs": 3300,
+  "n_opportunities_approx": 330,
+  "decision": {
+    "stage": 2,
+    "frozen_entry": "E2",
+    "exit_arms": [
+      "T1",
+      "T2",
+      "T3",
+      "T4",
+      "T5",
+      "T6",
+      "T7",
+      "T8",
+      "T9",
+      "T10"
+    ],
+    "source_stage1": "/home/reza/Desktop/BTC_backtest/results/stage1_entry_90d_1s_20260910_115513",
+    "primary_rule": "Net BTC on 60d select (E2 entry stream); confirm on 30d holdout",
+    "winner_on_select": "T7",
+    "winner_select_net_btc": 0.00013369515397709065,
+    "winner_select_return_pct": 1.7066994399357993,
+    "winner_select_max_dd": -0.030841074284770863,
+    "winner_select_trades": 128,
+    "winner_holdout_net_btc": 0.0005083649403753255,
+    "winner_holdout_return_pct": 6.489585697101896,
+    "winner_holdout_max_dd": -0.02759219198044917,
+    "winner_holdout_trades": 202,
+    "next_stage": "Stage 3: compare selectors A\u2013F vs best fixed T on frozen E2 entry",
+    "rule": "Do not pick exit on full 90d. Stage-1 best_T is only a hint; Stage-2 select ranking is authoritative for the fixed entry."
+  },
+  "notes": [
+    "Stage 2 exit ranking on frozen entry=E2",
+    "Reused Stage 1 counterfactual T1\u2013T10 legs on the E2 entry stream (same candles/costs)",
+    "No selectors in this stage"
+  ]
+}

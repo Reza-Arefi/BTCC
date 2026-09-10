@@ -1,0 +1,86 @@
+{
+  "eval_start": "2026-06-12 11:45:00+00:00",
+  "eval_end": "2026-09-10 11:45:00+00:00",
+  "select_end": "2026-08-11 11:44:59+00:00",
+  "days": 90,
+  "select_days": 60,
+  "holdout_days": 30,
+  "signal_interval": "15m",
+  "exit_interval": "1s",
+  "exit_arms": [
+    "T1",
+    "T2",
+    "T3",
+    "T4",
+    "T5",
+    "T6",
+    "T7",
+    "T8",
+    "T9",
+    "T10"
+  ],
+  "long_threshold": 0.65,
+  "max_open": 8,
+  "variants": [
+    "BASE",
+    "E1",
+    "E2",
+    "E3",
+    "E4",
+    "E5"
+  ],
+  "n_decision_bars": 8639,
+  "n_opportunities": 4320,
+  "n_closed_legs": 43160,
+  "max_simultaneous": {
+    "BASE": 8,
+    "E1": 8,
+    "E2": 8,
+    "E3": 8,
+    "E4": 8,
+    "E5": 8
+  },
+  "n_coins": 38,
+  "decision": {
+    "stage": 1,
+    "exit_arms": [
+      "T1",
+      "T2",
+      "T3",
+      "T4",
+      "T5",
+      "T6",
+      "T7",
+      "T8",
+      "T9",
+      "T10"
+    ],
+    "variants": [
+      "BASE",
+      "E1",
+      "E2",
+      "E3",
+      "E4",
+      "E5"
+    ],
+    "select_days": 60,
+    "holdout_days": 30,
+    "primary_rule": "mean Net BTC across T1\u2013T10 on 60d select",
+    "winner_on_select": "E2",
+    "winner_select_mean_net_btc": 6.7586539672641444e-06,
+    "winner_select_best_T": "T7",
+    "winner_select_T1_net_btc": 1.2763751038107735e-05,
+    "winner_holdout_mean_net_btc": 0.00023780671731733427,
+    "winner_holdout_T1_net_btc": 0.00011476578219272201,
+    "winner_holdout_worst_max_dd": -0.02759219198044917,
+    "t1_only_select_winner": "E2",
+    "rule": "Pick entry on 60d select (mean across T1\u2013T10); confirm on 30d holdout. Do not pick on full 90d. Stage 2 still re-selects exit on the winning entry.",
+    "next_stage": "Freeze winning entry; re-rank T1\u2013T10 on that entry stream (stage 2)."
+  },
+  "notes": [
+    "Stage 1: entry sweep BASE/E1\u2013E5 with counterfactual T1\u2013T10 on each entry",
+    "15m signals; 1s trail exits",
+    "Walk-forward: first 60d=select, last 30d=holdout",
+    "No selectors (A\u2013F are stage 3)"
+  ]
+}

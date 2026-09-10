@@ -1,0 +1,22 @@
+{
+  "stage": 3,
+  "frozen_entry": "E2",
+  "fixed_benchmark_exit": "T7",
+  "source_stage1": "/home/reza/Desktop/BTC_backtest/results/stage1_entry_90d_1s_20260910_115513",
+  "source_stage2": "/home/reza/Desktop/BTC_backtest/results/stage2_exit_E2_90d_1s_20260910_155823",
+  "best_selector_on_select": "B",
+  "best_selector_select_net_btc": 4.3114587062506674e-05,
+  "best_selector_holdout_net_btc": 0.0006734833951543768,
+  "fixed_T7_select_net_btc": 0.00013369515397709065,
+  "fixed_T7_holdout_net_btc": 0.0005083649403753255,
+  "beats_fixed_on_select": false,
+  "beats_fixed_on_holdout": true,
+  "keep_selector": false,
+  "live_candidate": {
+    "entry": "E2",
+    "exit": "T7",
+    "exit_kind": "fixed"
+  },
+  "rule": "Keep selector only if it beats fixed T7 on BOTH 60d select and 30d holdout.",
+  "next_stage": "Stage 4 sizing/capacity only after live candidate is frozen."
+}

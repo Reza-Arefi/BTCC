@@ -9,7 +9,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from binance_btc_bot.config_loader import is_live_trading_enabled, load_config
+from binance_btc_bot.config_loader import (
+    env_live_trading_enabled,
+    is_live_trading_enabled,
+    load_config,
+)
 from binance_btc_bot.credentials import (
     credentials_required_for_mode,
     load_binance_credentials_from_env,
@@ -76,6 +80,11 @@ class BinanceBotEngine:
             dry_run = bool(live.get("dry_run", True))
 
         writes = live_enabled_cfg and not dry_run
+        if writes and not env_live_trading_enabled():
+            raise RuntimeError(
+                "LIVE TRADING DISABLED — NO ORDERS WILL BE SUBMITTED. "
+                "Set LIVE_TRADING_ENABLED=true only after explicit operator authorization."
+            )
         if writes and not (allow_live_writes and authorized_live_mode):
             raise RuntimeError(
                 "Refusing to construct engine with live writes enabled. "
@@ -139,6 +148,24 @@ class BinanceBotEngine:
             repo = Path(root).resolve().parent
             db_path = str(repo / db_path)
         self.db = BotDatabase(db_path)
+
+        # Immutable daily archive (dry-run + live). Never overwrites prior days.
+        arch_cfg = self.cfg.get("archive") or {}
+        arch_root = arch_cfg.get("root") or "results/live_archive"
+        if not str(arch_root).startswith("/") and ":" not in str(arch_root)[:3]:
+            repo = Path(root).resolve().parent
+            arch_root = str(repo / arch_root)
+        from binance_btc_bot.archive import LiveDailyArchive, attach_archive_to_database
+
+        self.live_archive = LiveDailyArchive(
+            arch_root,
+            fingerprint=self.cfg.get("_production_fingerprint") or {},
+            enabled=bool(arch_cfg.get("enabled", True)),
+        )
+        attach_archive_to_database(self.db, self.live_archive)
+
+        if not env_live_trading_enabled() or self.dry_run or not self.live_enabled:
+            logger.warning("LIVE TRADING DISABLED — NO ORDERS WILL BE SUBMITTED")
 
         # Preload signer when path is configured (dry-run still OK without it).
         signer = self.creds.get_signer() if self.creds.private_key_path else None

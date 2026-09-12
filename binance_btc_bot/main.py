@@ -26,9 +26,14 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv()
 
     parser = argparse.ArgumentParser(
-        description="Binance BTC compounding bot (FixedStrategyProvider→T1, dry-run default)"
+        description="Binance BTC compounding bot (T30+E2 production freeze; dry-run default)"
     )
     parser.add_argument("--config", default=None, help="Path to binance_bot.yaml")
+    parser.add_argument(
+        "--check-config",
+        action="store_true",
+        help="Validate/print frozen production configuration and exit (no orders).",
+    )
     parser.add_argument(
         "--stage",
         choices=["1", "2", "3", "4", "5", "recovery", "dry", "all"],
@@ -99,6 +104,13 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config)
     log_cfg = cfg.get("logging") or {}
     setup_logging(str(log_cfg.get("level") or "INFO"), log_cfg.get("dir"))
+
+    if args.check_config:
+        from binance_btc_bot.config_loader import format_check_config_report, validate_production_freeze
+
+        print(format_check_config_report(cfg))
+        errs = validate_production_freeze(cfg)
+        return 1 if errs else 0
 
     if args.telegram_control:
         import time as _time

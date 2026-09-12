@@ -134,6 +134,11 @@ class BinanceExchange(ExchangeAdapter):
             ) from e
 
     def _writes_allowed(self) -> tuple[bool, str]:
+        # Hard kill switch — default false. Accidental process start cannot submit.
+        from binance_btc_bot.config_loader import env_live_trading_enabled
+
+        if not env_live_trading_enabled():
+            return False, "LIVE_TRADING_ENABLED_FALSE"
         if self.dry_run:
             return False, "DRY_RUN"
         if not self.live_enabled:

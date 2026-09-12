@@ -6,6 +6,9 @@
 *.key
 *ed25519*private*
 *private*key*
+secrets/
+credentials/
+private_config/
 
 # Runtime / local data
 .venv/
@@ -15,6 +18,9 @@ __pycache__/
 data/
 binance_btc_bot/logs/
 *.log
+
+# Large research / market datasets (keep local)
+results/
 
 # OS / editor
 Thumbs.db

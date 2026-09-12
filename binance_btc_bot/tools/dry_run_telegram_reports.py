@@ -39,6 +39,9 @@ def main() -> int:
             "fees": {"legs": [{"amount": 0.00001, "asset": "BNB"}]},
             "protection": {
                 "strategy": "T1",
+                "entry_price": 0.00332,
+                "activation_price": 0.00333328,
+                "stop_loss_price": 0.0033034,
                 "activation_display": "0.40%",
                 "trail_display": "0.25%",
                 "hard_sl_display": "0.50%",

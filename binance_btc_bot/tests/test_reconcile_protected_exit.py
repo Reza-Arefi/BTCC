@@ -487,6 +487,19 @@ class TestReconcileProtectedFlatExit(unittest.TestCase):
         self.assertEqual(payload.get("signal", {}).get("current_s"), 0.6)
         self.assertEqual(payload.get("signal", {}).get("genuine_new_cross"), True)
         self.assertEqual(payload.get("portfolio_before", {}).get("equity_btc"), 1.0)
+        prot = payload.get("protection") or {}
+        self.assertIsNotNone(prot.get("entry_price"))
+        self.assertIsNotNone(prot.get("activation_price"))
+        self.assertIsNotNone(prot.get("stop_loss_price"))
+        entry_px = float(prot["entry_price"])
+        self.assertAlmostEqual(float(prot["activation_price"]) / entry_px, 1.0075, places=4)
+        self.assertAlmostEqual(float(prot["stop_loss_price"]) / entry_px, 0.9925, places=4)
+        from binance_btc_bot.notifications.telegram_reports import format_trade_open
+
+        text = format_trade_open(payload)
+        self.assertIn("Entry price:", text)
+        self.assertIn("Activation:", text)
+        self.assertIn("Stop loss:", text)
 
 
 if __name__ == "__main__":

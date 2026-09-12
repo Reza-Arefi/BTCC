@@ -44,6 +44,9 @@ def _open_payload(**overrides):
         "fees": {"legs": [{"amount": 0.00001, "asset": "BNB"}]},
         "protection": {
             "strategy": "T1",
+            "entry_price": 0.00332,
+            "activation_price": 0.00333328,
+            "stop_loss_price": 0.0033034,
             "activation_display": "0.40%",
             "trail_display": "0.25%",
             "hard_sl_display": "0.50%",
@@ -126,6 +129,12 @@ class TestTelegramReporting(unittest.TestCase):
         self.assertIn("BNB fee path", text)
         self.assertIn("24539661681", text)
         self.assertIn("BRT", text)
+        self.assertIn("Entry price:", text)
+        self.assertIn("Activation:", text)
+        self.assertIn("Stop loss:", text)
+        self.assertIn("0.00332", text)
+        self.assertIn("0.00333328", text)
+        self.assertIn("0.0033034", text)
 
     # B
     def test_b_close_message(self):

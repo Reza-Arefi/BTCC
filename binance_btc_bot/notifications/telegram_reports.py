@@ -147,6 +147,24 @@ def format_trade_open(data: Mapping[str, Any]) -> str:
         else ("Genuine new cross: NO" if genuine is False else f"Genuine new cross: {NA}")
     )
 
+    entry_px = prot.get("entry_price") or entry.get("avg_price")
+    act_px = prot.get("activation_price")
+    sl_px = prot.get("stop_loss_price") or prot.get("hard_sl_price")
+    # If only a numeric hard_sl was stored (legacy), treat it as a price when it looks like one.
+    if sl_px is None:
+        raw_sl = prot.get("hard_sl")
+        if isinstance(raw_sl, (int, float)) and float(raw_sl) > 0:
+            sl_px = raw_sl
+
+    act_pct = prot.get("activation_display") or prot.get("activation")
+    sl_pct = prot.get("hard_sl_display")
+    act_line = f"Activation:  {fmt_price(act_px)}"
+    if act_pct:
+        act_line = f"{act_line}  ({na(act_pct)})"
+    sl_line = f"Stop loss:   {fmt_price(sl_px)}"
+    if sl_pct:
+        sl_line = f"{sl_line}  ({na(sl_pct)})"
+
     lines = [
         "🟢 TRADE OPENED",
         _sep(),
@@ -164,7 +182,7 @@ def format_trade_open(data: Mapping[str, Any]) -> str:
         "ENTRY",
         f"Side:     {na(entry.get('side') or 'BUY')}",
         f"Qty:      {fmt_qty(entry.get('quantity'))} {na(entry.get('base_asset'))}",
-        f"Fill avg: {fmt_price(entry.get('avg_price'))}",
+        f"Entry:    {fmt_price(entry_px)}",
         f"BTC invested: {fmt_btc(entry.get('btc_invested'))}",
         f"Allocation:   {fmt_pct(entry.get('actual_allocation_pct') if entry.get('actual_allocation_pct') is not None else None)}",
         f"Order ID: {na(entry.get('order_id'))}",
@@ -173,14 +191,15 @@ def format_trade_open(data: Mapping[str, Any]) -> str:
         "FEES",
         *format_commissions(fees if isinstance(fees, Mapping) else {}),
         "",
-        "PROTECTION",
-        f"Strategy: {na(prot.get('strategy') or data.get('strategy'))}",
-        f"Activation: {na(prot.get('activation_display') or prot.get('activation'))}",
-        f"Trail dist: {na(prot.get('trail_display') or prot.get('trail_distance'))}",
-        f"Hard SL:    {na(prot.get('hard_sl_display') or prot.get('hard_sl'))}",
-        f"OCO ID:     {na(prot.get('oco_id'))}",
-        f"OCO status: {na(prot.get('oco_status'))}",
-        f"Prot qty:   {fmt_qty(prot.get('protected_qty'))}",
+        "PROTECTION / LEVELS",
+        f"Strategy:    {na(prot.get('strategy') or data.get('strategy'))}",
+        f"Entry price: {fmt_price(entry_px)}",
+        act_line,
+        sl_line,
+        f"Trail dist:  {na(prot.get('trail_display') or prot.get('trail_distance'))}",
+        f"OCO ID:      {na(prot.get('oco_id'))}",
+        f"OCO status:  {na(prot.get('oco_status'))}",
+        f"Prot qty:    {fmt_qty(prot.get('protected_qty'))}",
         "",
         "PORTFOLIO",
         *_portfolio_block("BEFORE", before),

@@ -444,6 +444,18 @@ class OrderLifecycle:
                 },
                 protection={
                     "strategy": strategy.key,
+                    "entry_price": fill.avg_price,
+                    "activation_price": (
+                        oco.activation_price
+                        if oco and oco.activation_price is not None
+                        else float(fill.avg_price) * (1.0 + float(strategy.activation))
+                    ),
+                    "stop_loss_price": (
+                        oco.initial_stop
+                        if oco and oco.initial_stop is not None
+                        else float(fill.avg_price)
+                        * (1.0 - float(strategy.arm_sl_activation_trail))
+                    ),
                     "activation_display": f"{strategy.activation * 100:.2f}%",
                     "trail_display": f"{strategy.trail_distance * 100:.2f}%",
                     "hard_sl_display": f"{strategy.arm_sl_activation_trail * 100:.2f}%",

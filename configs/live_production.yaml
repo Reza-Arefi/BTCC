@@ -1,0 +1,47 @@
+# =============================================================================
+# LIVE PRODUCTION CONFIGURATION — discovery / fingerprint document
+# =============================================================================
+# AUTHORITATIVE RUNTIME FILE:
+#   binance_btc_bot/config/binance_bot.yaml
+#
+# Do NOT put alternate strategy parameters here. This file identifies the
+# frozen production identity so operators and clones can find it quickly.
+# The bot loads binance_bot.yaml via config_loader.DEFAULT_CONFIG_PATH.
+# =============================================================================
+
+authoritative_runtime_config: binance_btc_bot/config/binance_bot.yaml
+
+production:
+  config_version: "T30_E2_T65_v1"
+  strategy: T30
+  entry_profile: e2
+  threshold: 0.65
+  entry_rule: NEW_CROSS
+  late_entry: false
+  selector: null
+  t30:
+    stop_loss: 0.03        # 3%
+    activation: 0.01       # 1%
+    trail_distance: 0.0025 # 0.25%
+  portfolio:
+    max_simultaneous_trades: 8
+    allocation_per_trade: 0.125
+  live_trading_enabled_default: false
+  dry_run_default: true
+
+safety:
+  require_env_LIVE_TRADING_ENABLED: true
+  note: >
+    Real orders require ALL of: LIVE_TRADING_ENABLED=true,
+    live.enabled=true, dry_run=false, and an explicit arming path
+    (--live3-arm --authorize-live or --first-trade --authorize-live).
+    Default construction never submits orders.
+
+validated_fingerprint:
+  window: "2026-08-20 → 2026-09-10"
+  trades: 202
+  win_rate_pct: 82.67
+  profit_factor: 1.63
+  net_pct: 8.26
+  max_dd_pct: -1.60
+  source: results/final_selection_t1_t30_e2/

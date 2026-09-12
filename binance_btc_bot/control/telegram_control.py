@@ -290,7 +290,7 @@ def format_config(view: dict[str, Any], ctrl: RuntimeController) -> str:
             "FROZEN (Telegram cannot change)",
             "  S threshold 0.65",
             "  new-cross-only entry gate",
-            "  T1–T10 trail definitions (activation/SL/trail distances)",
+            "  T1–T10 + T21/T30 trail definitions (activation/SL/trail distances)",
             "  selector algorithms A–F (research definitions)",
             "  risk ceiling 0.5%",
             "  allocation_per_trade 12.5%",

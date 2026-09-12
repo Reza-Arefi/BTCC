@@ -26,11 +26,16 @@ E3_MODERATE_BOOST = 0.07
 E3_RVOL_MIN = 1.5
 
 
-def momentum_factor_e2(alt_btc: pd.DataFrame, interval: str = "15m") -> dict[str, Any]:
+def momentum_factor_e2(
+    alt_btc: pd.DataFrame,
+    interval: str = "15m",
+    *,
+    horizon_weights: dict | None = None,
+) -> dict[str, Any]:
     """Faster momentum profile — delegates to shared momentum_factor(profile='e2')."""
     from btcc.factors.momentum import momentum_factor
 
-    return momentum_factor(alt_btc, interval, profile="e2")
+    return momentum_factor(alt_btc, interval, profile="e2", horizon_weights=horizon_weights)
 
 
 
@@ -223,6 +228,7 @@ def score_variant(
     use_e1: bool = False,
     use_e2: bool = False,
     shared: dict[str, Any] | None = None,
+    e2_horizon_weights: dict | None = None,
 ) -> dict[str, Any]:
     """Signed S for BASE / E1 / E2 / E4 factor mixes."""
     from btcc.factors.btc_regime import btc_regime_factor
@@ -238,7 +244,11 @@ def score_variant(
             "regime": btc_regime_factor(btc_usdt, None, {}, interval),
         }
 
-    mom = momentum_factor_e2(alt_btc, interval) if use_e2 else momentum_factor(alt_btc, interval)
+    mom = (
+        momentum_factor_e2(alt_btc, interval, horizon_weights=e2_horizon_weights)
+        if use_e2
+        else momentum_factor(alt_btc, interval)
+    )
     volat = volatility_factor_e1(alt_btc) if use_e1 else volatility_factor(alt_btc)
     rsi_f = rsi_factor_e1(alt_btc) if use_e1 else rsi_factor(alt_btc)
     trend = shared["trend"]

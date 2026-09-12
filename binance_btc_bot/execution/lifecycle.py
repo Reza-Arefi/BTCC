@@ -13,6 +13,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping
 
 from binance_btc_bot.accounting.btc_accounting import TradeAccounting
@@ -288,6 +289,54 @@ class OrderLifecycle:
                 "fees_usdt": fill.commission_usdt,
             }
         )
+        # Persist full entry factor snapshot (if caller attached it to signal).
+        try:
+            snap = None
+            if isinstance(signal_snippet, dict):
+                snap = signal_snippet.get("entry_snapshot")
+            if isinstance(snap, dict) and snap:
+                self.db.insert_signal(
+                    symbol=sym,
+                    score=signal_snippet.get("current_s") if signal_snippet else None,
+                    relative_price=snap.get("relative_price"),
+                    strategy=strategy.key,
+                    classification="ENTRY_SNAPSHOT",
+                    payload={
+                        "trade_id": trade_id,
+                        "previous_s": (signal_snippet or {}).get("previous_s"),
+                        "current_s": (signal_snippet or {}).get("current_s"),
+                        "threshold": (signal_snippet or {}).get("threshold"),
+                        "entry_snapshot": snap,
+                    },
+                )
+                self.db.insert_event(
+                    "ENTRY_SNAPSHOT",
+                    symbol=sym,
+                    trade_id=trade_id,
+                    reason="FACTORS_AT_ENTRY",
+                    payload={"entry_snapshot": snap, "signal": signal_snippet},
+                )
+                snap_dir = Path(self.db.path).resolve().parent / "entry_snapshots"
+                snap_dir.mkdir(parents=True, exist_ok=True)
+                (snap_dir / f"{trade_id}.json").write_text(
+                    json.dumps(
+                        {
+                            "trade_id": trade_id,
+                            "symbol": sym,
+                            "strategy": strategy.key,
+                            "entry_time": entry_time,
+                            "signal": signal_snippet,
+                            "entry_snapshot": snap,
+                        },
+                        indent=2,
+                        default=str,
+                    ),
+                    encoding="utf-8",
+                )
+                events.append("ENTRY_SNAPSHOT_SAVED")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("entry snapshot persist failed: %s", scrub_exception(e))
+            events.append("ENTRY_SNAPSHOT_FAILED")
         self.db.insert_order(
             trade_id=trade_id,
             symbol=sym,
@@ -2393,6 +2442,68 @@ class OrderLifecycle:
                 if stop_hit and state == "NO_OPEN_LIST":
                     state = "PROTECTED_EMERGENCY_STOP"
 
+                # Operator-marked manual protection (e.g. web UI replaced bot OCO).
+                manual_protection = False
+                try:
+                    raw_cfg = tr.get("strategy_config_json")
+                    scfg = json.loads(raw_cfg) if isinstance(raw_cfg, str) else (raw_cfg or {})
+                    manual_protection = bool(scfg.get("manual_protection"))
+                except Exception:  # noqa: BLE001
+                    manual_protection = False
+                if manual_protection and local_status in {
+                    "PROTECTED",
+                    "PROTECTED_EMERGENCY",
+                    "DRY_RUN_PROTECTED",
+                }:
+                    state = "PROTECTED_MANUAL"
+                    notes.append(f"PROTECTED_MANUAL:{trade_id}:{sym}")
+                    try:
+                        self.safety.clear_warn(
+                            "RECONCILE_PROTECTION_MISSING",
+                            symbol=sym,
+                            trade_id=trade_id,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+
+                # Accept standalone exchange protective sells (manual TP/SL) as coverage
+                # when the stored OCO list id no longer matches / was cancelled.
+                if state in {"NO_OPEN_LIST", "LIST_NOT_OPEN"} and local_status in {
+                    "PROTECTED",
+                    "PROTECTED_EMERGENCY",
+                    "DRY_RUN_PROTECTED",
+                }:
+                    protective_types = {
+                        "STOP_LOSS",
+                        "STOP_LOSS_LIMIT",
+                        "TAKE_PROFIT",
+                        "TAKE_PROFIT_LIMIT",
+                        "LIMIT_MAKER",
+                        "TRAILING_STOP_MARKET",
+                    }
+                    for o in open_orders or []:
+                        if not isinstance(o, dict):
+                            continue
+                        if str(o.get("symbol") or "").upper() != sym:
+                            continue
+                        if str(o.get("side") or "").upper() != "SELL":
+                            continue
+                        otype = str(o.get("type") or o.get("orderType") or "").upper()
+                        if otype in protective_types:
+                            state = "PROTECTED_EXTERNAL"
+                            notes.append(
+                                f"PROTECTED_EXTERNAL:{trade_id}:{sym}:orderId={o.get('orderId')}:{otype}"
+                            )
+                            try:
+                                self.safety.clear_warn(
+                                    "RECONCILE_PROTECTION_MISSING",
+                                    symbol=sym,
+                                    trade_id=trade_id,
+                                )
+                            except Exception:  # noqa: BLE001
+                                pass
+                            break
+
                 # Fail closed: local claims protection but exchange shows none — only if
                 # sellable inventory remains. Unsellable dust after OCO exit = POSITION_CLOSED path.
                 if local_status in {
@@ -2466,7 +2577,7 @@ class OrderLifecycle:
                         )
                         notes.append(f"FAIL_CLOSED:{trade_id}:{sym}:unverified_protection")
 
-                if state == "PROTECTED_OPEN_LIST":
+                if state in {"PROTECTED_OPEN_LIST", "PROTECTED_EXTERNAL", "PROTECTED_MANUAL"}:
                     try:
                         self.safety.clear_warn(
                             "RECONCILE_PROTECTION_MISSING",

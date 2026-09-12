@@ -29,10 +29,17 @@ def compute_all_factors(
     Indicator architecture is unchanged; only the factor-group mix may adapt.
     """
     mom_profile = str((cfg.get("factors") or {}).get("momentum_profile") or "base")
-    mom = momentum_factor(alt_btc, interval, profile=mom_profile)
+    mom_hw = (cfg.get("factors") or {}).get("momentum_e2_horizon_weights")
+    mom = momentum_factor(
+        alt_btc,
+        interval,
+        profile=mom_profile,
+        horizon_weights=mom_hw if mom_profile == "e2" else None,
+    )
     trend = trend_factor(alt_btc)
     regime = btc_regime_factor(btc_usdt, dominance_pct, dom_changes, interval)
-    volu = volume_factor(alt_usdt, alt_btc)
+    vol_iw = (cfg.get("factors") or {}).get("volume_internal_weights")
+    volu = volume_factor(alt_usdt, alt_btc, internal_weights=vol_iw)
     volat = volatility_factor(alt_btc)
     rsi_f = rsi_factor(alt_btc)
     struct = structure_factor(alt_btc)

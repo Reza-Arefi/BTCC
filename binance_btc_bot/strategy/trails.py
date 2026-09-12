@@ -79,7 +79,7 @@ def map_trail_to_binance_oco(
     list_client_order_id: str | None = None,
     side: str = "SELL",
 ) -> BinanceTrailMapping:
-    """Map T1–T10 geometry onto Binance native OCO trailing exit.
+    """Map T1–T10/T21/T30 geometry onto Binance native OCO trailing exit.
 
     Mapping (LONG ALT/BTC exit = SELL OCO):
       aboveType = TAKE_PROFIT

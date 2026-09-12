@@ -77,7 +77,7 @@ class TestTelegramRuntimeControl(unittest.TestCase):
     def test_d_invalid_strategy(self):
         r = self._cmd("/strategy T99")
         self.assertFalse(r.ok)
-        self.assertEqual(self.ctrl.state.strategy, "T4")
+        self.assertEqual(self.ctrl.state.strategy, "T30")
 
     # E
     def test_e_selector_none_a_f(self):

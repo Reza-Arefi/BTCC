@@ -1,5 +1,21 @@
-# Binance BTC Compounding Bot — primary configuration
+# Binance BTC Compounding Bot — AUTHORITATIVE production configuration
 # Real trading is DISABLED by default. Do not enable without explicit operator action.
+#
+# Canonical identity (final selection fingerprint): T30 + E2 + T65 + NEW CROSS + late-entry OFF
+# Mirror / discovery pointer: configs/live_production.yaml
+# Do NOT optimize these frozen values. Research ideas (B1/D2/T60/selectors) stay offline.
+
+production:
+  config_version: "T30_E2_T65_v1"
+  validated_strategy: T30
+  entry_profile: e2
+  threshold: 0.65
+  entry_rule: NEW_CROSS
+  late_entry: false
+  selector: null
+  fingerprint_window: "2026-08-20→2026-09-10"
+  fingerprint_trades: 202
+  fingerprint_note: "Final T1–T30 selection — live must match this identity"
 
 exchange:
   name: binance
@@ -17,9 +33,10 @@ exchange:
 
 live:
   enabled: false          # HARD DEFAULT — never auto-enable
-  strategy: T4            # fixed live strategy (1% SL / 1% act / 0.5% trail)
+  strategy: T30           # E2 entry + T30 exits (3% SL / 1% act / 0.25% trail fixed OCO)
   selector: null          # selectors A–F NOT used live
   dry_run: true           # even if enabled later, prefer dry_run until Stage 8
+  # LIVE_TRADING_ENABLED env must also be true before any real order (default false).
   # Deprecated aliases — authoritative values live under portfolio:
   max_open_positions: 8
   one_position_per_symbol: true
@@ -126,6 +143,17 @@ strategies:
     arm_sl_activation_trail: 0.02
     activation: 0.015
     trail_distance: 0.005
+  # Live-enabled wide SL (research T21 initial geometry). Adaptive peak
+  # tightening is research-only; live uses fixed 1.0% trail via native OCO.
+  T21:
+    arm_sl_activation_trail: 0.05
+    activation: 0.01
+    trail_distance: 0.01
+  # Preferred live fixed proxy from 21d study (Binance OCO-compatible).
+  T30:
+    arm_sl_activation_trail: 0.03
+    activation: 0.01
+    trail_distance: 0.0025
 
 # Research-only selector definitions (LIVE_SELECTOR = null).
 selectors:
@@ -146,6 +174,8 @@ entry:
   long_threshold: 0.65
   # null = no upper band (matches Binance research default)
   upper_threshold: null
+  rule: NEW_CROSS             # CrossingStateMachine: first enter zone only
+  late_entry_enabled: false   # OFF — matches validated fingerprint
 
 # Production score path — signed S via compute_all_factors → combined_score.
 # Live uses E2 faster-momentum profile (research early-breakout experiment).
@@ -155,9 +185,14 @@ signal:
   min_history_bars: 100
   max_closed_candle_age_sec: 1800
   signal_config_path: configs/signal_config.yaml
-  momentum_profile: e2        # live-only override; research configs keep base unless set
+  momentum_profile: e2        # FROZEN production profile — do not change without new validation
   diagnostics: false          # set true or pass --signal-diag to log SCORE_DIAG lines
   # Formula identity: compute_all_factors → combined_score (signed S), NOT raw signal_score.
+
+# Immutable daily archive under results/live_archive/YYYY-MM-DD/ (never overwrite).
+archive:
+  enabled: true
+  root: results/live_archive
 
 # Binance-native trailing exit mapping (documented; do not invent alternate geometry).
 binance_trailing:

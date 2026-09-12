@@ -1,6 +1,6 @@
 """Telegram runtime control plane — isolated from frozen strategy/risk YAML.
 
-Affects NEW entries only. Never mutates T1–T10 definitions, research selectors'
+Affects NEW entries only. Never mutates T1–T10/T21/T30 definitions, research selectors'
 algorithms, risk ceilings, or Binance protection geometry.
 """
 
@@ -16,6 +16,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
+from binance_btc_bot.config_loader import FROZEN_STRATEGIES
 from binance_btc_bot.secrets import scrub_exception, scrub_text
 from binance_btc_bot.strategy.selectors import SELECTOR_KINDS, select_strategy_for_research
 from binance_btc_bot.strategy.trails import TrailStrategy, get_strategy
@@ -23,11 +24,12 @@ from binance_btc_bot.strategy.provider import StrategyProvider
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_STRATEGIES = frozenset(f"T{i}" for i in range(1, 11))
+ALLOWED_STRATEGIES = frozenset(FROZEN_STRATEGIES.keys())
 ALLOWED_SELECTORS = frozenset({"NONE", *SELECTOR_KINDS.keys()})
 ALLOWED_MAX_TRADES = frozenset({3, 4, 5, 6, 8, 10})
 RUNTIME_STATE_VERSION = 1
 CONFIRM_TTL_SEC = 120.0
+DEFAULT_LIVE_STRATEGY = "T30"
 
 
 class OperatorMode(str, Enum):
@@ -53,7 +55,7 @@ class PendingConfirmation:
 class RuntimeControlState:
     version: int = RUNTIME_STATE_VERSION
     mode: str = OperatorMode.RUNNING.value
-    strategy: str = "T4"
+    strategy: str = "T30"
     selector: str = "NONE"
     max_simultaneous_trades: int = 8
     corrupt: bool = False
@@ -101,7 +103,7 @@ class RuntimeControlState:
         ver = int(raw.get("version") or 0)
         if ver != RUNTIME_STATE_VERSION:
             raise ValueError(f"unsupported runtime state version {ver}")
-        strategy = str(raw.get("strategy") or "T4").upper()
+        strategy = str(raw.get("strategy") or DEFAULT_LIVE_STRATEGY).upper()
         selector = str(raw.get("selector") or "NONE").upper()
         if selector in ("", "NULL", "NONE"):
             selector = "NONE"
@@ -184,14 +186,14 @@ class RuntimeStrategyProvider(StrategyProvider):
 
     def __init__(
         self,
-        strategy_key: str = "T4",
+        strategy_key: str = DEFAULT_LIVE_STRATEGY,
         *,
         selector_key: str | None = None,
         strategies_cfg: Any = None,
     ) -> None:
         self._strategies_cfg = strategies_cfg
         self._lock = threading.RLock()
-        self._strategy = "T4"
+        self._strategy = DEFAULT_LIVE_STRATEGY
         self._selector: str | None = None
         self.set_strategy(strategy_key)
         self.set_selector(selector_key)
@@ -508,7 +510,7 @@ class RuntimeController:
 
     def _cmd_strategy(self, args: list[str], *, chat_id: str, raw: str) -> ControlResult:
         if len(args) != 1:
-            return ControlResult(False, "Usage: /strategy T1 … T10")
+            return ControlResult(False, "Usage: /strategy T1…T10|T21|T30")
         key = args[0].upper()
         if key not in ALLOWED_STRATEGIES:
             return ControlResult(False, f"Invalid strategy. Allowed: {', '.join(sorted(ALLOWED_STRATEGIES))}")
@@ -741,7 +743,7 @@ def default_runtime_state_path(db_path: str | Path) -> Path:
 HELP_TEXT = """BTCC Telegram controls
 
 Runtime (confirm when prompted):
-/strategy T1…T10
+/strategy T1…T10|T21|T30
 /selector NONE|A|B|C|D|E|F
 /max 3|4|5|6|8|10
 /confirm  /cancel
@@ -754,5 +756,5 @@ Read-only:
 /status  /config  /positions  /balance  /health
 /performance  /reconcile
 
-Frozen YAML research/risk/T1–T10 definitions cannot be changed here.
+Frozen YAML research/risk/T1–T10/T21/T30 definitions cannot be changed here.
 """

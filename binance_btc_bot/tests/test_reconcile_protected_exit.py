@@ -246,6 +246,38 @@ class TestReconcileProtectedFlatExit(unittest.TestCase):
         self.assertTrue(out.get("fail_closed"))
         self.assertEqual(db.get_trade("6ab324eebd1140dca6ec05e27f8d0a62")["status"], "PROTECTED")
 
+    def test_d2_manual_web_take_profit_not_missing_warn(self):
+        """Operator replaced bot OCO with a standalone TAKE_PROFIT_LIMIT — do not spam warn."""
+        tp = {
+            "symbol": "LINKBTC",
+            "orderId": 333,
+            "orderListId": -1,
+            "type": "TAKE_PROFIT_LIMIT",
+            "side": "SELL",
+            "status": "NEW",
+            "clientOrderId": "web_manual_tp",
+        }
+        life, db, safety, portfolio, ex, n = self._setup(
+            free=0.0, locked=10.0, open_lists=[], open_orders=[tp]
+        )
+        out = life.reconcile_rest(universe=["LINKBTC"])
+        notes = " ".join(out["notes"])
+        self.assertIn("PROTECTED_EXTERNAL", notes)
+        self.assertNotIn("RECONCILE_PROTECTION_MISSING", safety.reasons)
+        self.assertFalse(out.get("fail_closed"))
+
+    def test_d3_manual_protection_flag_skips_warn(self):
+        life, db, safety, portfolio, ex, n = self._setup(free=10.0, locked=0.0, open_lists=[], open_orders=[])
+        db.update_trade(
+            "6ab324eebd1140dca6ec05e27f8d0a62",
+            strategy_config={"manual_protection": True, "reservation_id": None},
+        )
+        out = life.reconcile_rest(universe=["LINKBTC"])
+        notes = " ".join(out["notes"])
+        self.assertIn("PROTECTED_MANUAL", notes)
+        self.assertNotIn("RECONCILE_PROTECTION_MISSING", safety.reasons)
+        self.assertFalse(out.get("fail_closed"))
+
     def test_e_second_reconcile_no_duplicate_trade_closed(self):
         life, db, safety, portfolio, ex, n = self._setup()
         ex.get_order_list.return_value = self._all_done_list(symbol="LINKBTC", oco_id="1001")

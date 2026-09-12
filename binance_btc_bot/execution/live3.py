@@ -3,12 +3,14 @@
 HARD RULES
 ----------
 * Default on-disk YAML stays LIVE=false / DRY_RUN=true / max=8.
-* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, T4, NONE, max=8,
+* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, T30, NONE, max=8,
   allocation 12.5%, total cap 100% (8 × 12.5%).
 * Preflight never places real orders and never auto-arms.
 * Arm only via --live3-arm --authorize-live after LIVE_3_PREFLIGHT=PASS
   with BINANCE_LIVE3_AUTHORIZED=true.
-* Strategy / scoring / frozen T4 geometry / risk formulas are not modified.
+* Strategy / scoring / frozen T30 geometry / risk formulas are not modified.
+* Entry uses E2 momentum profile (signal.momentum_profile=e2).
+* Live T30 is fixed OCO: SL 3%, activation 1%, trail 0.25%.
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ LIVE3_TOTAL_CAP = 1.0  # 8 × 12.5%
 LIVE3_THRESHOLD = 0.65
 LIVE3_RISK = 0.005
 LIVE3_PREVIOUS_MAX = 3  # Stage-7 hard cap (for one-shot CONFIG UPDATED notify)
-LIVE3_STRATEGY = "T4"
+LIVE3_STRATEGY = "T30"
 LIVE3_STRATEGY_GEOM = FROZEN_STRATEGIES[LIVE3_STRATEGY]
 
 
@@ -200,7 +202,7 @@ class Live3PreflightReport:
 
 
 def seed_live3_runtime_state(db_path: str | Path) -> Path:
-    """Persist Telegram runtime initial state: RUNNING / T4 / NONE / max=LIVE3_MAX."""
+    """Persist Telegram runtime initial state: RUNNING / T30 / NONE / max=LIVE3_MAX."""
     path = default_runtime_state_path(db_path)
     store = RuntimeStateStore(path)
     state = RuntimeControlState(
@@ -1180,6 +1182,15 @@ class Live3Session:
                     "threshold": thr,
                     "genuine_new_cross": True,
                 }
+                # Attach full factor/weight snapshot from the score evaluation that fired.
+                try:
+                    snap = None
+                    if hasattr(score_provider, "last_entry_snapshot"):
+                        snap = score_provider.last_entry_snapshot(sym)
+                    if isinstance(snap, dict) and snap:
+                        signal["entry_snapshot"] = snap
+                except Exception:  # noqa: BLE001
+                    pass
                 life = engine.lifecycle.run_entry(
                     symbol=sym,
                     strategy=engine.current_strategy(),

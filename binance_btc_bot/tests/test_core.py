@@ -45,7 +45,7 @@ class TestConfigAndStrategies(unittest.TestCase):
     def test_load_config_frozen_strategies(self):
         cfg = load_config()
         self.assertFalse(cfg["live"]["enabled"])
-        self.assertEqual(cfg["live"]["strategy"], "T4")
+        self.assertEqual(cfg["live"]["strategy"], "T30")
         self.assertIsNone(cfg["live"]["selector"])
         for k, (sl, act, dist) in FROZEN_STRATEGIES.items():
             s = get_strategy(k, cfg["strategies"])

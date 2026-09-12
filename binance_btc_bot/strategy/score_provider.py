@@ -30,9 +30,11 @@ import pandas as pd
 import yaml
 
 from btcc.factors.combine import compute_all_factors
+from btcc.late_entry.score import late_entry_score
 from btcc.series.relative import build_alt_btc
 from btcc.sim.score import (
     ACTIVE_SIGNAL_KEYS,
+    ALL_FACTOR_KEYS,
     combined_score,
     extract_factor_scores,
     static_factor_weights,
@@ -106,6 +108,8 @@ class ProductionScoreProvider:
         self.weights = static_factor_weights(self.signal_cfg)
         self._btc_cache: tuple[str | None, pd.DataFrame | None] = (None, None)
         self._last: dict[str, ScoreSnapshot] = {}
+        # Full factor dump from the latest successful evaluate() per symbol.
+        self._last_entry_snapshot: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------ API
     def __call__(self, symbol: str, rel: Mapping[str, Any] | None = None) -> float | None:
@@ -113,6 +117,10 @@ class ProductionScoreProvider:
         if snap.S_current is None or not math.isfinite(float(snap.S_current)):
             return None
         return float(snap.S_current)
+
+    def last_entry_snapshot(self, symbol: str) -> dict[str, Any] | None:
+        """Return the factor/weight snapshot from the latest successful evaluate()."""
+        return self._last_entry_snapshot.get(symbol.upper())
 
     def evaluate(
         self,
@@ -190,7 +198,7 @@ class ProductionScoreProvider:
             )
             return self._finish(snap)
 
-        s_curr = score_from_frames(
+        detail_curr = detail_from_frames(
             rel_df,
             alt_vol,
             btc_df,
@@ -198,9 +206,10 @@ class ProductionScoreProvider:
             interval=self.interval,
             weights=self.weights,
         )
+        s_curr = None if detail_curr is None else detail_curr.get("S")
         s_prev = None
         if len(rel_df) >= int(self.min_history_bars) + 1:
-            s_prev = score_from_frames(
+            detail_prev = detail_from_frames(
                 rel_df.iloc[:-1],
                 alt_vol.iloc[:-1],
                 btc_df.iloc[:-1],
@@ -208,8 +217,10 @@ class ProductionScoreProvider:
                 interval=self.interval,
                 weights=self.weights,
             )
+            s_prev = None if detail_prev is None else detail_prev.get("S")
 
         if s_curr is None:
+            self._last_entry_snapshot.pop(sym, None)
             snap = ScoreSnapshot(
                 timestamp=ts_iso,
                 symbol=sym,
@@ -225,7 +236,27 @@ class ProductionScoreProvider:
             )
             return self._finish(snap)
 
-        cross = new_cross_into(s_prev, s_curr, self.long_threshold)
+        cross = new_cross_into(s_prev, float(s_curr), self.long_threshold)
+        # Persist full factor snapshot for this evaluation (used at entry).
+        entry_snap = dict(detail_curr or {})
+        entry_snap.update(
+            {
+                "timestamp": ts_iso,
+                "symbol": sym,
+                "S_previous": s_prev,
+                "S_current": float(s_curr),
+                "cross_detected": bool(cross),
+                "long_threshold": float(self.long_threshold),
+                "decision_candle_ts": str(rel_df["timestamp"].iloc[-1]),
+                "relative_price": float(rel_df["close"].iloc[-1]),
+                "history_bars": len(rel_df),
+                "interval": self.interval,
+                "momentum_profile": str(
+                    (self.signal_cfg.get("factors") or {}).get("momentum_profile") or "base"
+                ),
+            }
+        )
+        self._last_entry_snapshot[sym] = json_safe(entry_snap)
         snap = ScoreSnapshot(
             timestamp=ts_iso,
             symbol=sym,
@@ -331,6 +362,106 @@ def new_cross_into(
     if not (math.isfinite(float(s_previous)) and math.isfinite(float(s_current))):
         return False
     return float(s_previous) < float(long_threshold) and float(s_current) >= float(long_threshold)
+
+
+def json_safe(obj: Any) -> Any:
+    """Convert nested factor dumps into JSON-serializable primitives."""
+    if obj is None or isinstance(obj, (bool, str)):
+        return obj
+    if isinstance(obj, (int, float)):
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        return obj
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        v = float(obj)
+        if math.isnan(v) or math.isinf(v):
+            return None
+        return v
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, dict):
+        return {str(k): json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+    if hasattr(obj, "item"):
+        try:
+            return json_safe(obj.item())
+        except Exception:  # noqa: BLE001
+            pass
+    return str(obj)
+
+
+def detail_from_frames(
+    rel_hist: pd.DataFrame,
+    alt_vol_hist: pd.DataFrame,
+    btc_hist: pd.DataFrame,
+    signal_cfg: dict[str, Any],
+    *,
+    interval: str = DEFAULT_INTERVAL,
+    weights: dict[str, float] | None = None,
+    dominance_pct: float | None = None,
+    dom_changes: dict[int, float | None] | None = None,
+) -> dict[str, Any] | None:
+    """Full factor + weight + contribution + late_entry dump (JSON-safe).
+
+    Same validity gates as ``score_from_frames``. Returns None when S cannot be formed.
+    """
+    if rel_hist is None or len(rel_hist) < MIN_HISTORY_BARS:
+        return None
+    if alt_vol_hist is None or btc_hist is None or len(alt_vol_hist) < 1 or len(btc_hist) < 1:
+        return None
+    for frame in (rel_hist, alt_vol_hist, btc_hist):
+        cols = [c for c in ("open", "high", "low", "close", "volume") if c in frame.columns]
+        if cols and not np.isfinite(frame[cols].to_numpy(dtype=float)).all():
+            return None
+
+    factors = compute_all_factors(
+        rel_hist,
+        alt_vol_hist,
+        btc_hist,
+        dominance_pct,
+        dom_changes or {},
+        signal_cfg,
+        interval,
+    )
+    factor_scores = extract_factor_scores(factors)
+    for key in ACTIVE_SIGNAL_KEYS:
+        val = factor_scores.get(key)
+        if val is None or not np.isfinite(float(val)):
+            return None
+
+    w = weights if weights is not None else static_factor_weights(signal_cfg)
+    scored = combined_score(factor_scores, w)
+    s_val = scored.get("S")
+    if s_val is None or not np.isfinite(float(s_val)):
+        return None
+
+    late = late_entry_score(rel_hist, factors, signal_cfg, interval)
+    # Drop huge prose notes from btc_regime if present
+    factors_out = dict(factors)
+    br = factors_out.get("btc_regime")
+    if isinstance(br, dict) and "dominance_source_note" in br:
+        br = dict(br)
+        note = br.get("dominance_source_note")
+        br["dominance_source_note"] = (str(note)[:160] if note is not None else None)
+        factors_out["btc_regime"] = br
+
+    return json_safe(
+        {
+            "S": float(s_val),
+            "factor_scores": factor_scores,
+            "signed": scored.get("signed"),
+            "weights": scored.get("weights"),
+            "contributions": scored.get("contributions"),
+            "active_signal_keys": list(ACTIVE_SIGNAL_KEYS),
+            "all_factor_keys": list(ALL_FACTOR_KEYS),
+            "factors": factors_out,
+            "late_entry": late,
+            "signal_score_unsigned": factors.get("signal_score"),
+        }
+    )
 
 
 def score_from_frames(

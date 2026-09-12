@@ -392,6 +392,20 @@ class FirstTradeController:
                 eq = float(out.equity_before.get("trading_capital_btc") or 0)
                 avail = float(out.equity_before.get("available_btc") or 0)
                 out.events.append("ENTRY_SUBMISSION")
+                signal = {
+                    "timestamp": out.signal_time,
+                    "previous_s": float(prev),
+                    "current_s": score_f,
+                    "threshold": thr,
+                    "genuine_new_cross": True,
+                }
+                try:
+                    if hasattr(self.score_provider, "last_entry_snapshot"):
+                        snap = self.score_provider.last_entry_snapshot(sym)
+                        if isinstance(snap, dict) and snap:
+                            signal["entry_snapshot"] = snap
+                except Exception:  # noqa: BLE001
+                    pass
                 life = engine.lifecycle.run_entry(
                     symbol=sym,
                     strategy=engine.current_strategy(),
@@ -401,6 +415,7 @@ class FirstTradeController:
                     open_exposure_pct=0.0,
                     btc_usdt=float(engine.market.book.get("BTCUSDT") or 0),
                     reservation_id=decision.reservation_id,
+                    signal=signal,
                 )
                 fill = life.fill
                 out.entry = {

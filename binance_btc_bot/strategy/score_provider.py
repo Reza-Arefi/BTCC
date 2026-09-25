@@ -564,9 +564,19 @@ def build_production_score_provider(
     *,
     exchange: Any,
     diagnostics: bool | None = None,
-) -> ProductionScoreProvider:
-    """Wire provider to exchange.get_klines (public Vision REST)."""
+):
+    """Wire provider to exchange.get_klines (public Vision REST).
+
+    Dispatches to Ichimoku τ provider when entry.mode / momentum_profile is ichimoku_i2_tau.
+    """
     signal = dict(cfg.get("signal") or {})
+    entry = cfg.get("entry") or {}
+    mode = str(entry.get("mode") or signal.get("momentum_profile") or "").lower()
+    if mode in {"ichimoku_i2_tau", "ichimoku"}:
+        from binance_btc_bot.strategy.ichimoku_tau_provider import build_ichimoku_tau_provider
+
+        return build_ichimoku_tau_provider(cfg, exchange=exchange, diagnostics=diagnostics)
+
     path = signal.get("signal_config_path") or "configs/signal_config.yaml"
     signal_cfg = load_signal_config(path)
     # Live bot may override momentum profile (e.g. e2) without mutating research YAML.
@@ -575,7 +585,6 @@ def build_production_score_provider(
         factors = dict(signal_cfg.get("factors") or {})
         factors["momentum_profile"] = str(mom_profile).strip().lower()
         signal_cfg = {**signal_cfg, "factors": factors}
-    entry = cfg.get("entry") or {}
     thr = float(entry.get("long_threshold") or signal.get("long_threshold") or DEFAULT_THRESHOLD)
     diag = bool(signal.get("diagnostics", False)) if diagnostics is None else bool(diagnostics)
 

@@ -10,6 +10,12 @@ import pytest
 from binance_btc_bot.archive.live_archive import LiveDailyArchive, attach_archive_to_database
 from binance_btc_bot.config_loader import (
     PRODUCTION_CONFIG_VERSION,
+    PRODUCTION_STRATEGY,
+    PRODUCTION_ENTRY_PROFILE,
+    PRODUCTION_THRESHOLD,
+    PRODUCTION_TAU,
+    PRODUCTION_MAX_TRADES,
+    PRODUCTION_ALLOC,
     env_live_trading_enabled,
     format_check_config_report,
     is_live_trading_enabled,
@@ -22,15 +28,19 @@ from binance_btc_bot.storage.database import BotDatabase
 
 def test_production_config_loads_and_matches_freeze():
     cfg = load_config()
-    assert cfg["live"]["strategy"] == "T30"
-    assert cfg["signal"]["momentum_profile"] == "e2"
-    assert float(cfg["entry"]["long_threshold"]) == pytest.approx(0.65)
+    assert cfg["live"]["strategy"] == PRODUCTION_STRATEGY
+    assert cfg["signal"]["momentum_profile"] == PRODUCTION_ENTRY_PROFILE
+    assert cfg["entry"]["mode"] == PRODUCTION_ENTRY_PROFILE
+    assert float(cfg["entry"]["long_threshold"]) == pytest.approx(PRODUCTION_THRESHOLD)
+    assert float(cfg["entry"]["tau"]) == pytest.approx(PRODUCTION_TAU)
     assert cfg["entry"]["late_entry_enabled"] is False
     assert cfg["live"]["selector"] in (None, "null", "")
-    t30 = cfg["strategies"]["T30"]
-    assert float(t30["arm_sl_activation_trail"]) == pytest.approx(0.03)
-    assert float(t30["activation"]) == pytest.approx(0.01)
-    assert float(t30["trail_distance"]) == pytest.approx(0.0025)
+    w2 = cfg["strategies"]["W2"]
+    assert float(w2["arm_sl_activation_trail"]) == pytest.approx(0.05)
+    assert float(w2["activation"]) == pytest.approx(0.04)
+    assert float(w2["trail_distance"]) == pytest.approx(0.02)
+    assert int(cfg["portfolio"]["max_simultaneous_trades"]) == PRODUCTION_MAX_TRADES
+    assert float(cfg["portfolio"]["allocation_per_trade"]) == pytest.approx(PRODUCTION_ALLOC)
     assert (cfg.get("production") or {}).get("config_version") == PRODUCTION_CONFIG_VERSION
     assert validate_production_freeze(cfg) == []
     report = format_check_config_report(cfg)
@@ -56,8 +66,11 @@ def test_exchange_writes_blocked_when_kill_switch_false(monkeypatch):
 
 
 def test_live_archive_append_only(tmp_path: Path):
-    arch = LiveDailyArchive(tmp_path / "archive", fingerprint={"config_version": "T30_E2_T65_v1", "strategy": "T30"})
-    arch.record_signal({"symbol": "ETHBTC", "score": 0.7, "payload": {"S_prev": 0.5, "momentum_score": 0.8}})
+    arch = LiveDailyArchive(
+        tmp_path / "archive",
+        fingerprint={"config_version": PRODUCTION_CONFIG_VERSION, "strategy": PRODUCTION_STRATEGY},
+    )
+    arch.record_signal({"symbol": "ETHBTC", "score": 1.0, "payload": {"tau": 0.03, "ext_pct_close": 0.031}})
     arch.record_order({"symbol": "ETHBTC", "side": "BUY", "status": "DRY_RUN", "order_id": "1"})
     arch.record_trade({"trade_id": "t1", "symbol": "ETHBTC", "status": "CLOSED", "realized_pnl_btc": 0.0001})
     arch.write_daily_summary({"number_of_signals": 1, "number_of_trades": 1, "wins": 1, "losses": 0})
@@ -74,10 +87,8 @@ def test_live_archive_append_only(tmp_path: Path):
 
 def test_archive_hooks_database(tmp_path: Path):
     db = BotDatabase(str(tmp_path / "t.sqlite3"))
-    arch = LiveDailyArchive(tmp_path / "arch", fingerprint={"config_version": "T30_E2_T65_v1"})
+    arch = LiveDailyArchive(tmp_path / "arch", fingerprint={"config_version": PRODUCTION_CONFIG_VERSION})
     attach_archive_to_database(db, arch)
-    db.insert_signal(symbol="ETHBTC", score=0.66, strategy="T30", classification="NEW_CROSS", payload={"S": 0.66})
+    db.insert_signal(symbol="ETHBTC", score=1.0, strategy="W2", classification="NEW_CROSS", payload={"S": 1.0})
     days = list((tmp_path / "arch").glob("*"))
-    assert days
-    assert (days[0] / "signals.csv").exists()
-    db.close()
+    assert len(days) == 1

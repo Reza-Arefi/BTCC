@@ -1,4 +1,4 @@
-"""LIVE-3 preflight / hard max=8 tests (no real orders)."""
+"""LIVE-3 preflight / hard max=2 tests (no real orders)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,11 @@ from unittest.mock import patch
 
 from binance_btc_bot.config_loader import load_config
 from binance_btc_bot.execution.live3 import (
+    LIVE3_ALLOC,
     LIVE3_MAX,
+    LIVE3_RISK,
+    LIVE3_STRATEGY,
+    LIVE3_THRESHOLD,
     LIVE3_TOTAL_CAP,
     build_live3_probe_config,
     build_live3_target_config,
@@ -27,20 +31,21 @@ class TestLive3Overlay(unittest.TestCase):
         # Defaults remain safe on disk / base load
         self.assertFalse(bool((base.get("live") or {}).get("enabled")))
         self.assertTrue(bool((base.get("live") or {}).get("dry_run", True)))
-        self.assertEqual(int((base.get("portfolio") or {}).get("max_simultaneous_trades")), 8)
+        self.assertEqual(int((base.get("portfolio") or {}).get("max_simultaneous_trades")), LIVE3_MAX)
 
         tgt = build_live3_target_config(base)
         self.assertTrue(tgt["live"]["enabled"])
         self.assertFalse(tgt["live"]["dry_run"])
-        self.assertEqual(tgt["live"]["strategy"], "T30")
+        self.assertEqual(tgt["live"]["strategy"], LIVE3_STRATEGY)
         self.assertIsNone(tgt["live"]["selector"])
         self.assertEqual(tgt["portfolio"]["max_simultaneous_trades"], LIVE3_MAX)
-        self.assertEqual(tgt["portfolio"]["allocation_per_trade"], 0.125)
+        self.assertEqual(tgt["portfolio"]["allocation_per_trade"], LIVE3_ALLOC)
         self.assertEqual(tgt["portfolio"]["max_total_allocation"], LIVE3_TOTAL_CAP)
-        self.assertEqual(tgt["entry"]["long_threshold"], 0.65)
-        self.assertEqual(tgt["risk"]["max_loss_per_trade"], 0.005)
+        self.assertEqual(tgt["entry"]["long_threshold"], LIVE3_THRESHOLD)
+        self.assertEqual(tgt["entry"]["mode"], "ichimoku_i2_tau")
+        self.assertEqual(tgt["risk"]["max_loss_per_trade"], LIVE3_RISK)
         # Base untouched
-        self.assertEqual(int((base.get("portfolio") or {}).get("max_simultaneous_trades")), 8)
+        self.assertEqual(int((base.get("portfolio") or {}).get("max_simultaneous_trades")), LIVE3_MAX)
 
     def test_probe_overlay_blocks_writes(self):
         probe = build_live3_probe_config()
@@ -48,14 +53,14 @@ class TestLive3Overlay(unittest.TestCase):
         self.assertTrue(probe["live"]["dry_run"])
         self.assertEqual(probe["portfolio"]["max_simultaneous_trades"], LIVE3_MAX)
 
-    def test_hard_eight_trade_cap(self):
+    def test_hard_two_trade_cap(self):
         cfg = build_live3_target_config()
         pm = PortfolioManager.from_config(cfg)
         for i in range(LIVE3_MAX):
             self.assertTrue(pm.try_reserve(f"A{i}BTC").ok)
-        ninth = pm.try_reserve("BLOCKBTC")
-        self.assertFalse(ninth.ok)
-        self.assertEqual(ninth.reason, "MAX_OPEN_TRADES")
+        overflow = pm.try_reserve("BLOCKBTC")
+        self.assertFalse(overflow.ok)
+        self.assertEqual(overflow.reason, "MAX_OPEN_TRADES")
 
     def test_seed_runtime_state(self):
         from binance_btc_bot.control.runtime import RuntimeController, RuntimeStateStore
@@ -65,7 +70,7 @@ class TestLive3Overlay(unittest.TestCase):
         db.write_text("", encoding="utf-8")
         path = seed_live3_runtime_state(db)
         ctrl = RuntimeController(RuntimeStateStore(path), authorized_chat_id="x")
-        self.assertEqual(ctrl.state.strategy, "T30")
+        self.assertEqual(ctrl.state.strategy, LIVE3_STRATEGY)
         self.assertEqual(ctrl.state.selector, "NONE")
         self.assertEqual(ctrl.state.max_simultaneous_trades, LIVE3_MAX)
         self.assertEqual(ctrl.state.mode, "RUNNING")
@@ -77,17 +82,17 @@ class TestLive3Overlay(unittest.TestCase):
         again = load_config()
         self.assertFalse(bool((again.get("live") or {}).get("enabled")))
         self.assertTrue(bool((again.get("live") or {}).get("dry_run", True)))
-        self.assertEqual(int((again.get("portfolio") or {}).get("max_simultaneous_trades")), 8)
+        self.assertEqual(int((again.get("portfolio") or {}).get("max_simultaneous_trades")), LIVE3_MAX)
 
     def test_config_updated_message_brt(self):
         msg = format_live3_config_updated_message(
-            old_max=3,
-            new_max=8,
+            old_max=8,
+            new_max=LIVE3_MAX,
             timestamp="2026-09-07T01:00:00Z",
         )
         self.assertIn("CONFIGURATION UPDATED", msg)
-        self.assertIn("Strategy: T30", msg)
-        self.assertIn("3 → 8", msg)
+        self.assertIn(f"Strategy: {LIVE3_STRATEGY}", msg)
+        self.assertIn(f"8 → {LIVE3_MAX}", msg)
         self.assertIn("Max allocation: 100%", msg)
         self.assertIn("BRT", msg)
 

@@ -14,12 +14,17 @@ REPO_ROOT = PACKAGE_ROOT.parent
 DEFAULT_CONFIG_PATH = PACKAGE_ROOT / "config" / "binance_bot.yaml"
 PRODUCTION_POINTER_PATH = REPO_ROOT / "configs" / "live_production.yaml"
 
-# Frozen production identity from final T1–T30 selection.
-PRODUCTION_CONFIG_VERSION = "T30_E2_T65_v1"
-PRODUCTION_STRATEGY = "T30"
-PRODUCTION_ENTRY_PROFILE = "e2"
-PRODUCTION_THRESHOLD = 0.65
+# Frozen production identity — portfolio capacity selection (IS):
+#   W2 @ τ=3% Ichimoku I2 first-cross, Nmax=2, equal 50% allocation.
+PRODUCTION_CONFIG_VERSION = "W2_I2_T03_N2_v1"
+PRODUCTION_STRATEGY = "W2"
+PRODUCTION_ENTRY_PROFILE = "ichimoku_i2_tau"
+PRODUCTION_THRESHOLD = 0.5  # binary fire score (0 idle / 1 fire)
+PRODUCTION_TAU = 0.03
 PRODUCTION_LATE_ENTRY = False
+PRODUCTION_MAX_TRADES = 2
+PRODUCTION_ALLOC = 0.5
+PRODUCTION_MAX_LOSS = 0.025  # 50% allocation × 5% W2 SL
 
 FROZEN_STRATEGIES = {
     "T1": (0.0075, 0.0075, 0.0025),
@@ -38,6 +43,8 @@ FROZEN_STRATEGIES = {
     "T21": (0.05, 0.01, 0.01),
     # Live T30 = fixed OCO proxy from 21d study (SL -3% / act +1% / trail 0.25%).
     "T30": (0.03, 0.01, 0.0025),
+    # W2 = research wide momentum trail (SL 5% / act 4% / trail 2%).
+    "W2": (0.05, 0.04, 0.02),
 }
 
 EXPECTED_BTC_PAIRS = (
@@ -126,18 +133,24 @@ def _validate_config(cfg: dict[str, Any]) -> None:
     }
 
     risk = cfg.get("risk") or {}
-    max_loss = float(risk.get("max_loss_per_trade", 0.005))
-    if abs(max_loss - 0.005) > 1e-12:
-        raise ValueError("risk.max_loss_per_trade must remain 0.005 (0.5% equity)")
+    max_loss = float(risk.get("max_loss_per_trade", PRODUCTION_MAX_LOSS))
+    if abs(max_loss - PRODUCTION_MAX_LOSS) > 1e-12:
+        raise ValueError(f"risk.max_loss_per_trade must be {PRODUCTION_MAX_LOSS} for W2 50%×5% SL")
     risk = dict(risk)
     risk["max_allocation_pct"] = portfolio.allocation_per_trade
     risk["max_aggregate_exposure"] = portfolio.max_total_allocation
     cfg["risk"] = risk
 
     entry = cfg.get("entry") or {}
-    thr = float(entry.get("long_threshold", 0.65))
+    thr = float(entry.get("long_threshold", PRODUCTION_THRESHOLD))
     if abs(thr - PRODUCTION_THRESHOLD) > 1e-12:
         raise ValueError(f"entry.long_threshold must be {PRODUCTION_THRESHOLD} for live entry layer")
+    tau = float(entry.get("tau", PRODUCTION_TAU))
+    if abs(tau - PRODUCTION_TAU) > 1e-12:
+        raise ValueError(f"entry.tau must be {PRODUCTION_TAU} (3% above cloud)")
+    mode = str(entry.get("mode") or PRODUCTION_ENTRY_PROFILE).lower()
+    if mode != PRODUCTION_ENTRY_PROFILE:
+        raise ValueError(f"entry.mode must be '{PRODUCTION_ENTRY_PROFILE}'")
     if bool(entry.get("late_entry_enabled", False)) is not False:
         raise ValueError("entry.late_entry_enabled must be false (late-entry OFF)")
     rule = str(entry.get("rule") or "NEW_CROSS").upper().replace("_", "")
@@ -145,8 +158,8 @@ def _validate_config(cfg: dict[str, Any]) -> None:
         raise ValueError("entry.rule must be NEW_CROSS")
 
     signal = cfg.get("signal") or {}
-    mom = str(signal.get("momentum_profile") or "").lower()
-    if mom != PRODUCTION_ENTRY_PROFILE:
+    mom = str(signal.get("momentum_profile") or PRODUCTION_ENTRY_PROFILE).lower()
+    if mom not in {PRODUCTION_ENTRY_PROFILE, "ichimoku_i2_tau"}:
         raise ValueError(f"signal.momentum_profile must be '{PRODUCTION_ENTRY_PROFILE}' for production")
 
     prod = cfg.get("production") or {}
@@ -186,19 +199,25 @@ def production_fingerprint(cfg: dict[str, Any]) -> dict[str, Any]:
     live = cfg.get("live") or {}
     entry = cfg.get("entry") or {}
     signal = cfg.get("signal") or {}
-    t30 = (cfg.get("strategies") or {}).get("T30") or {}
+    w2 = (cfg.get("strategies") or {}).get("W2") or {}
+    port = cfg.get("_portfolio") or cfg.get("portfolio") or {}
     prod = cfg.get("production") or {}
     return {
         "config_version": str(prod.get("config_version") or PRODUCTION_CONFIG_VERSION),
         "strategy": str(live.get("strategy") or "").upper(),
-        "entry_profile": str(signal.get("momentum_profile") or "").lower(),
+        "entry_profile": str(
+            entry.get("mode") or signal.get("momentum_profile") or ""
+        ).lower(),
         "threshold": float(entry.get("long_threshold") or 0),
+        "tau": float(entry.get("tau") or 0),
         "entry_rule": str(entry.get("rule") or "NEW_CROSS").upper(),
         "late_entry": bool(entry.get("late_entry_enabled", False)),
         "selector": live.get("selector"),
-        "t30_sl": float(t30.get("arm_sl_activation_trail") or 0),
-        "t30_activation": float(t30.get("activation") or 0),
-        "t30_trail": float(t30.get("trail_distance") or 0),
+        "w2_sl": float(w2.get("arm_sl_activation_trail") or 0),
+        "w2_activation": float(w2.get("activation") or 0),
+        "w2_trail": float(w2.get("trail_distance") or 0),
+        "max_trades": int(port.get("max_simultaneous_trades") or 0),
+        "allocation": float(port.get("allocation_per_trade") or 0),
         "live_enabled_yaml": bool(live.get("enabled", False)),
         "dry_run_yaml": bool(live.get("dry_run", True)),
         "LIVE_TRADING_ENABLED": env_live_trading_enabled(),
@@ -216,16 +235,22 @@ def validate_production_freeze(cfg: dict[str, Any]) -> list[str]:
         errs.append(f"entry_profile={fp['entry_profile']} (expected {PRODUCTION_ENTRY_PROFILE})")
     if abs(float(fp["threshold"]) - PRODUCTION_THRESHOLD) > 1e-12:
         errs.append(f"threshold={fp['threshold']} (expected {PRODUCTION_THRESHOLD})")
+    if abs(float(fp.get("tau") or 0) - PRODUCTION_TAU) > 1e-12:
+        errs.append(f"tau={fp.get('tau')} (expected {PRODUCTION_TAU})")
     if fp["late_entry"] is not False:
         errs.append("late_entry must be false")
     if fp["selector"] not in (None, "null", ""):
         errs.append("selector must be null")
-    if abs(float(fp["t30_sl"]) - 0.03) > 1e-12:
-        errs.append("T30 SL must be 0.03")
-    if abs(float(fp["t30_activation"]) - 0.01) > 1e-12:
-        errs.append("T30 activation must be 0.01")
-    if abs(float(fp["t30_trail"]) - 0.0025) > 1e-12:
-        errs.append("T30 trail must be 0.0025")
+    if abs(float(fp["w2_sl"]) - 0.05) > 1e-12:
+        errs.append("W2 SL must be 0.05")
+    if abs(float(fp["w2_activation"]) - 0.04) > 1e-12:
+        errs.append("W2 activation must be 0.04")
+    if abs(float(fp["w2_trail"]) - 0.02) > 1e-12:
+        errs.append("W2 trail must be 0.02")
+    if int(fp.get("max_trades") or 0) != PRODUCTION_MAX_TRADES:
+        errs.append(f"max_trades={fp.get('max_trades')} (expected {PRODUCTION_MAX_TRADES})")
+    if abs(float(fp.get("allocation") or 0) - PRODUCTION_ALLOC) > 1e-12:
+        errs.append(f"allocation={fp.get('allocation')} (expected {PRODUCTION_ALLOC})")
     if fp["config_version"] != PRODUCTION_CONFIG_VERSION:
         errs.append(f"config_version={fp['config_version']} (expected {PRODUCTION_CONFIG_VERSION})")
     return errs
@@ -240,13 +265,16 @@ def format_check_config_report(cfg: dict[str, Any]) -> str:
         f"config_version:       {fp['config_version']}",
         f"strategy:             {fp['strategy']}",
         f"entry_profile:        {fp['entry_profile']}",
-        f"threshold:            {fp['threshold']}",
+        f"tau:                  {fp.get('tau')} (3% above cloud)",
+        f"threshold:            {fp['threshold']} (binary fire)",
         f"entry_rule:           {fp['entry_rule']}",
         f"late_entry:           {fp['late_entry']}",
         f"selector:             {fp['selector']}",
-        f"T30 SL:               {fp['t30_sl']} (3%)",
-        f"T30 activation:       {fp['t30_activation']} (1%)",
-        f"T30 trail:            {fp['t30_trail']} (0.25%)",
+        f"W2 SL:                {fp['w2_sl']} (5%)",
+        f"W2 activation:        {fp['w2_activation']} (4%)",
+        f"W2 trail:             {fp['w2_trail']} (2%)",
+        f"max_trades:           {fp.get('max_trades')}",
+        f"allocation:           {fp.get('allocation')}",
         f"live.enabled (YAML):  {fp['live_enabled_yaml']}",
         f"live.dry_run (YAML):  {fp['dry_run_yaml']}",
         f"LIVE_TRADING_ENABLED: {fp['LIVE_TRADING_ENABLED']}",
@@ -256,7 +284,7 @@ def format_check_config_report(cfg: dict[str, Any]) -> str:
         lines.append("STATUS: FAIL")
         lines.extend(f"  - {e}" for e in errs)
     else:
-        lines.append("STATUS: OK — matches frozen T30_E2_T65_v1 fingerprint")
+        lines.append(f"STATUS: OK — matches frozen {PRODUCTION_CONFIG_VERSION} fingerprint")
     if not fp["LIVE_TRADING_ENABLED"]:
         lines.append("")
         lines.append("LIVE TRADING DISABLED — NO ORDERS WILL BE SUBMITTED")

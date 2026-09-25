@@ -2,15 +2,14 @@
 
 HARD RULES
 ----------
-* Default on-disk YAML stays LIVE=false / DRY_RUN=true / max=8.
-* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, T30, NONE, max=8,
-  allocation 12.5%, total cap 100% (8 × 12.5%).
+* Default on-disk YAML stays LIVE=false / DRY_RUN=true / max=2.
+* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, W2, NONE, max=2,
+  allocation 50%, total cap 100% (2 × 50%), Ichimoku I2 τ=3%.
 * Preflight never places real orders and never auto-arms.
 * Arm only via --live3-arm --authorize-live after LIVE_3_PREFLIGHT=PASS
   with BINANCE_LIVE3_AUTHORIZED=true.
-* Strategy / scoring / frozen T30 geometry / risk formulas are not modified.
-* Entry uses E2 momentum profile (signal.momentum_profile=e2).
-* Live T30 is fixed OCO: SL 3%, activation 1%, trail 0.25%.
+* Entry: Ichimoku I2 + first τ=3% cloud extension (binary fire score).
+* Live W2 is fixed OCO: SL 5%, activation 4%, trail 2%.
 """
 
 from __future__ import annotations
@@ -41,13 +40,14 @@ from binance_btc_bot.strategy.trails import get_strategy
 
 logger = logging.getLogger(__name__)
 
-LIVE3_MAX = 8
-LIVE3_ALLOC = 0.125
-LIVE3_TOTAL_CAP = 1.0  # 8 × 12.5%
-LIVE3_THRESHOLD = 0.65
-LIVE3_RISK = 0.005
-LIVE3_PREVIOUS_MAX = 3  # Stage-7 hard cap (for one-shot CONFIG UPDATED notify)
-LIVE3_STRATEGY = "T30"
+LIVE3_MAX = 2
+LIVE3_ALLOC = 0.5
+LIVE3_TOTAL_CAP = 1.0  # 2 × 50%
+LIVE3_THRESHOLD = 0.5
+LIVE3_TAU = 0.03
+LIVE3_RISK = 0.025  # 50% × 5% W2 SL
+LIVE3_PREVIOUS_MAX = 8  # prior Stage-8 hard cap (for one-shot CONFIG UPDATED notify)
+LIVE3_STRATEGY = "W2"
 LIVE3_STRATEGY_GEOM = FROZEN_STRATEGIES[LIVE3_STRATEGY]
 
 
@@ -77,7 +77,21 @@ def build_live3_target_config(base: dict[str, Any] | None = None) -> dict[str, A
     cfg["risk"] = risk
     entry = dict(cfg.get("entry") or {})
     entry["long_threshold"] = LIVE3_THRESHOLD
+    entry["tau"] = LIVE3_TAU
+    entry["mode"] = "ichimoku_i2_tau"
+    entry["late_entry_enabled"] = False
+    entry["rule"] = "NEW_CROSS"
     cfg["entry"] = entry
+    signal = dict(cfg.get("signal") or {})
+    signal["momentum_profile"] = "ichimoku_i2_tau"
+    cfg["signal"] = signal
+    prod = dict(cfg.get("production") or {})
+    prod["config_version"] = "W2_I2_T03_N2_v1"
+    prod["validated_strategy"] = LIVE3_STRATEGY
+    prod["entry_profile"] = "ichimoku_i2_tau"
+    prod["threshold"] = LIVE3_THRESHOLD
+    prod["tau"] = LIVE3_TAU
+    cfg["production"] = prod
     return cfg
 
 
@@ -326,9 +340,9 @@ def run_live3_preflight(
                 hard_detail = f"reserve_{i}={r.reason}"
                 break
         else:
-            blocked = pm.try_reserve("NINTHBTC")
+            blocked = pm.try_reserve("OVERCAPBTC")
             hard_cap_ok = (not blocked.ok) and blocked.reason == "MAX_OPEN_TRADES"
-            hard_detail = f"9th={blocked.reason} total_cap={pm.max_total_allocation}"
+            hard_detail = f"overflow={blocked.reason} total_cap={pm.max_total_allocation}"
     except Exception as e:  # noqa: BLE001
         hard_detail = scrub_exception(e)
     out.add(
@@ -339,18 +353,18 @@ def run_live3_preflight(
     )
     out.add(
         6,
-        "allocation_per_trade=12.5%",
-        "PASS" if abs(float(port.get("allocation_per_trade") or 0) - 0.125) < 1e-12 else "FAIL",
+        f"allocation_per_trade={LIVE3_ALLOC*100:.0f}%",
+        "PASS" if abs(float(port.get("allocation_per_trade") or 0) - LIVE3_ALLOC) < 1e-12 else "FAIL",
     )
     out.add(
         7,
-        "threshold=0.65",
-        "PASS" if abs(float(entry.get("long_threshold") or 0) - 0.65) < 1e-12 else "FAIL",
+        f"threshold={LIVE3_THRESHOLD}",
+        "PASS" if abs(float(entry.get("long_threshold") or 0) - LIVE3_THRESHOLD) < 1e-12 else "FAIL",
     )
     out.add(
         8,
-        "risk_ceiling=0.5%",
-        "PASS" if abs(float(risk.get("max_loss_per_trade") or 0) - 0.005) < 1e-12 else "FAIL",
+        f"risk_ceiling={LIVE3_RISK*100:.1f}%",
+        "PASS" if abs(float(risk.get("max_loss_per_trade") or 0) - LIVE3_RISK) < 1e-12 else "FAIL",
     )
 
     # --- Network / account gates via SAFE probe (writes blocked) ---
@@ -767,8 +781,8 @@ class Live3Session:
     def run(self, *, authorize_live: bool = False) -> Live3ArmReport:
         out = Live3ArmReport()
         out.notes.append(
-            f"LIVE-3: max={LIVE3_MAX} alloc=12.5% total_cap={LIVE3_TOTAL_CAP * 100:.0f}% "
-            f"{LIVE3_STRATEGY} selector=NONE"
+            f"LIVE-3: max={LIVE3_MAX} alloc=50% total_cap={LIVE3_TOTAL_CAP * 100:.0f}% "
+            f"{LIVE3_STRATEGY} selector=NONE τ=3%"
         )
         out.notes.append("production YAML not rewritten — live overlay is in-memory only")
         out.notes.append("no demo/forced signals; wait for genuine S crosses")
@@ -948,7 +962,7 @@ class Live3Session:
                 except Exception:  # noqa: BLE001
                     pass
             out.notes.append(
-                "overlay released on exit; on-disk YAML remains LIVE=false DRY_RUN=true max=8"
+                "overlay released on exit; on-disk YAML remains LIVE=false DRY_RUN=true max=2"
             )
             out.events.append("SESSION_STOPPED")
             self._persist_heartbeat(engine, out, running=False)

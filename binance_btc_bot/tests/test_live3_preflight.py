@@ -1,4 +1,4 @@
-"""LIVE-3 preflight / hard max=2 tests (no real orders)."""
+"""LIVE-3 preflight / hard max=4 tests (no real orders)."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class TestLive3Overlay(unittest.TestCase):
         self.assertEqual(tgt["portfolio"]["allocation_per_trade"], LIVE3_ALLOC)
         self.assertEqual(tgt["portfolio"]["max_total_allocation"], LIVE3_TOTAL_CAP)
         self.assertEqual(tgt["entry"]["long_threshold"], LIVE3_THRESHOLD)
-        self.assertEqual(tgt["entry"]["mode"], "ichimoku_i2_tau")
+        self.assertEqual(tgt["entry"]["mode"], "e2")
         self.assertEqual(tgt["risk"]["max_loss_per_trade"], LIVE3_RISK)
         # Base untouched
         self.assertEqual(int((base.get("portfolio") or {}).get("max_simultaneous_trades")), LIVE3_MAX)

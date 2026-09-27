@@ -14,17 +14,16 @@ REPO_ROOT = PACKAGE_ROOT.parent
 DEFAULT_CONFIG_PATH = PACKAGE_ROOT / "config" / "binance_bot.yaml"
 PRODUCTION_POINTER_PATH = REPO_ROOT / "configs" / "live_production.yaml"
 
-# Frozen production identity — portfolio capacity selection (IS):
-#   W2 @ τ=3% Ichimoku I2 first-cross, Nmax=2, equal 50% allocation.
-PRODUCTION_CONFIG_VERSION = "W2_I2_T03_N2_v1"
+# Frozen production identity — S>=0.65 + W2 capacity sweep / 180d comparison:
+#   E2 signed S NEW_CROSS >= 0.65, W2 exits, Nmax=4, equal 25% allocation.
+PRODUCTION_CONFIG_VERSION = "W2_E2_S65_N4_v1"
 PRODUCTION_STRATEGY = "W2"
-PRODUCTION_ENTRY_PROFILE = "ichimoku_i2_tau"
-PRODUCTION_THRESHOLD = 0.5  # binary fire score (0 idle / 1 fire)
-PRODUCTION_TAU = 0.03
+PRODUCTION_ENTRY_PROFILE = "e2"
+PRODUCTION_THRESHOLD = 0.65
 PRODUCTION_LATE_ENTRY = False
-PRODUCTION_MAX_TRADES = 2
-PRODUCTION_ALLOC = 0.5
-PRODUCTION_MAX_LOSS = 0.025  # 50% allocation × 5% W2 SL
+PRODUCTION_MAX_TRADES = 4
+PRODUCTION_ALLOC = 0.25
+PRODUCTION_MAX_LOSS = 0.0125  # 25% allocation × 5% W2 SL
 
 FROZEN_STRATEGIES = {
     "T1": (0.0075, 0.0075, 0.0025),
@@ -135,7 +134,7 @@ def _validate_config(cfg: dict[str, Any]) -> None:
     risk = cfg.get("risk") or {}
     max_loss = float(risk.get("max_loss_per_trade", PRODUCTION_MAX_LOSS))
     if abs(max_loss - PRODUCTION_MAX_LOSS) > 1e-12:
-        raise ValueError(f"risk.max_loss_per_trade must be {PRODUCTION_MAX_LOSS} for W2 50%×5% SL")
+        raise ValueError(f"risk.max_loss_per_trade must be {PRODUCTION_MAX_LOSS} for W2 25%×5% SL")
     risk = dict(risk)
     risk["max_allocation_pct"] = portfolio.allocation_per_trade
     risk["max_aggregate_exposure"] = portfolio.max_total_allocation
@@ -145,9 +144,6 @@ def _validate_config(cfg: dict[str, Any]) -> None:
     thr = float(entry.get("long_threshold", PRODUCTION_THRESHOLD))
     if abs(thr - PRODUCTION_THRESHOLD) > 1e-12:
         raise ValueError(f"entry.long_threshold must be {PRODUCTION_THRESHOLD} for live entry layer")
-    tau = float(entry.get("tau", PRODUCTION_TAU))
-    if abs(tau - PRODUCTION_TAU) > 1e-12:
-        raise ValueError(f"entry.tau must be {PRODUCTION_TAU} (3% above cloud)")
     mode = str(entry.get("mode") or PRODUCTION_ENTRY_PROFILE).lower()
     if mode != PRODUCTION_ENTRY_PROFILE:
         raise ValueError(f"entry.mode must be '{PRODUCTION_ENTRY_PROFILE}'")
@@ -159,7 +155,7 @@ def _validate_config(cfg: dict[str, Any]) -> None:
 
     signal = cfg.get("signal") or {}
     mom = str(signal.get("momentum_profile") or PRODUCTION_ENTRY_PROFILE).lower()
-    if mom not in {PRODUCTION_ENTRY_PROFILE, "ichimoku_i2_tau"}:
+    if mom != PRODUCTION_ENTRY_PROFILE:
         raise ValueError(f"signal.momentum_profile must be '{PRODUCTION_ENTRY_PROFILE}' for production")
 
     prod = cfg.get("production") or {}
@@ -209,7 +205,6 @@ def production_fingerprint(cfg: dict[str, Any]) -> dict[str, Any]:
             entry.get("mode") or signal.get("momentum_profile") or ""
         ).lower(),
         "threshold": float(entry.get("long_threshold") or 0),
-        "tau": float(entry.get("tau") or 0),
         "entry_rule": str(entry.get("rule") or "NEW_CROSS").upper(),
         "late_entry": bool(entry.get("late_entry_enabled", False)),
         "selector": live.get("selector"),
@@ -235,8 +230,6 @@ def validate_production_freeze(cfg: dict[str, Any]) -> list[str]:
         errs.append(f"entry_profile={fp['entry_profile']} (expected {PRODUCTION_ENTRY_PROFILE})")
     if abs(float(fp["threshold"]) - PRODUCTION_THRESHOLD) > 1e-12:
         errs.append(f"threshold={fp['threshold']} (expected {PRODUCTION_THRESHOLD})")
-    if abs(float(fp.get("tau") or 0) - PRODUCTION_TAU) > 1e-12:
-        errs.append(f"tau={fp.get('tau')} (expected {PRODUCTION_TAU})")
     if fp["late_entry"] is not False:
         errs.append("late_entry must be false")
     if fp["selector"] not in (None, "null", ""):
@@ -265,8 +258,7 @@ def format_check_config_report(cfg: dict[str, Any]) -> str:
         f"config_version:       {fp['config_version']}",
         f"strategy:             {fp['strategy']}",
         f"entry_profile:        {fp['entry_profile']}",
-        f"tau:                  {fp.get('tau')} (3% above cloud)",
-        f"threshold:            {fp['threshold']} (binary fire)",
+        f"threshold:            {fp['threshold']} (S cross-into)",
         f"entry_rule:           {fp['entry_rule']}",
         f"late_entry:           {fp['late_entry']}",
         f"selector:             {fp['selector']}",

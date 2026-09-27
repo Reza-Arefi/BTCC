@@ -3,12 +3,12 @@
 HARD RULES
 ----------
 * Default on-disk YAML stays LIVE=false / DRY_RUN=true / max=2.
-* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, W2, NONE, max=2,
-  allocation 50%, total cap 100% (2 × 50%), Ichimoku I2 τ=3%.
+* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, W2, NONE, max=4,
+  allocation 25%, total cap 100% (4 × 25%), E2 S>=0.65 NEW_CROSS.
 * Preflight never places real orders and never auto-arms.
 * Arm only via --live3-arm --authorize-live after LIVE_3_PREFLIGHT=PASS
   with BINANCE_LIVE3_AUTHORIZED=true.
-* Entry: Ichimoku I2 + first τ=3% cloud extension (binary fire score).
+* Entry: E2 signed S, NEW CROSS into S >= 0.65 on closed 15m bar.
 * Live W2 is fixed OCO: SL 5%, activation 4%, trail 2%.
 """
 
@@ -40,13 +40,12 @@ from binance_btc_bot.strategy.trails import get_strategy
 
 logger = logging.getLogger(__name__)
 
-LIVE3_MAX = 2
-LIVE3_ALLOC = 0.5
-LIVE3_TOTAL_CAP = 1.0  # 2 × 50%
-LIVE3_THRESHOLD = 0.5
-LIVE3_TAU = 0.03
-LIVE3_RISK = 0.025  # 50% × 5% W2 SL
-LIVE3_PREVIOUS_MAX = 8  # prior Stage-8 hard cap (for one-shot CONFIG UPDATED notify)
+LIVE3_MAX = 4
+LIVE3_ALLOC = 0.25
+LIVE3_TOTAL_CAP = 1.0  # 4 × 25%
+LIVE3_THRESHOLD = 0.65
+LIVE3_RISK = 0.0125  # 25% × 5% W2 SL
+LIVE3_PREVIOUS_MAX = 2  # prior W2_I2_T03_N2 cap (for one-shot CONFIG UPDATED notify)
 LIVE3_STRATEGY = "W2"
 LIVE3_STRATEGY_GEOM = FROZEN_STRATEGIES[LIVE3_STRATEGY]
 
@@ -77,20 +76,20 @@ def build_live3_target_config(base: dict[str, Any] | None = None) -> dict[str, A
     cfg["risk"] = risk
     entry = dict(cfg.get("entry") or {})
     entry["long_threshold"] = LIVE3_THRESHOLD
-    entry["tau"] = LIVE3_TAU
-    entry["mode"] = "ichimoku_i2_tau"
+    entry.pop("tau", None)
+    entry["mode"] = "e2"
     entry["late_entry_enabled"] = False
     entry["rule"] = "NEW_CROSS"
     cfg["entry"] = entry
     signal = dict(cfg.get("signal") or {})
-    signal["momentum_profile"] = "ichimoku_i2_tau"
+    signal["momentum_profile"] = "e2"
     cfg["signal"] = signal
     prod = dict(cfg.get("production") or {})
-    prod["config_version"] = "W2_I2_T03_N2_v1"
+    prod["config_version"] = "W2_E2_S65_N4_v1"
     prod["validated_strategy"] = LIVE3_STRATEGY
-    prod["entry_profile"] = "ichimoku_i2_tau"
+    prod["entry_profile"] = "e2"
     prod["threshold"] = LIVE3_THRESHOLD
-    prod["tau"] = LIVE3_TAU
+    prod.pop("tau", None)
     cfg["production"] = prod
     return cfg
 
@@ -781,8 +780,8 @@ class Live3Session:
     def run(self, *, authorize_live: bool = False) -> Live3ArmReport:
         out = Live3ArmReport()
         out.notes.append(
-            f"LIVE-3: max={LIVE3_MAX} alloc=50% total_cap={LIVE3_TOTAL_CAP * 100:.0f}% "
-            f"{LIVE3_STRATEGY} selector=NONE τ=3%"
+            f"LIVE-3: max={LIVE3_MAX} alloc={LIVE3_ALLOC * 100:.0f}% total_cap={LIVE3_TOTAL_CAP * 100:.0f}% "
+            f"{LIVE3_STRATEGY} selector=NONE S>={LIVE3_THRESHOLD}"
         )
         out.notes.append("production YAML not rewritten — live overlay is in-memory only")
         out.notes.append("no demo/forced signals; wait for genuine S crosses")

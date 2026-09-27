@@ -12,11 +12,10 @@
 authoritative_runtime_config: binance_btc_bot/config/binance_bot.yaml
 
 production:
-  config_version: "W2_I2_T03_N2_v1"
+  config_version: "W2_E2_S65_N4_v1"
   strategy: W2
-  entry_profile: ichimoku_i2_tau
-  tau: 0.03
-  threshold: 0.5
+  entry_profile: e2
+  threshold: 0.65
   entry_rule: NEW_CROSS
   late_entry: false
   selector: null
@@ -25,13 +24,13 @@ production:
     activation: 0.04       # 4%
     trail_distance: 0.02   # 2%
   portfolio:
-    max_simultaneous_trades: 2
-    allocation_per_trade: 0.5
+    max_simultaneous_trades: 4
+    allocation_per_trade: 0.25
   live_trading_enabled_default: false
   dry_run_default: true
   note: >
     MEXC H23 bot is a separate BTC_USD COIN-M product and is NOT this strategy.
-    ALT/BTC Ichimoku W2@3% N=2 runs on Binance spot (this config).
+    ALT/BTC E2 S>=0.65 + W2 N=4 runs on Binance spot (this config).
 
 safety:
   require_env_LIVE_TRADING_ENABLED: true
@@ -42,9 +41,9 @@ safety:
     Default construction never submits orders.
 
 validated_fingerprint:
-  window: "2026-06-23 → 2026-09-21"
-  source: results/btcc_m/ichimoku_portfolio_capacity/
-  selection: "W2 @ 3% Nmax=2 equal 50%"
-  is_growth_pct: 68.4
-  is_max_dd_pct: -12.0
-  is_trades: 110
+  window: "2026-03-25 → 2026-09-21"
+  source: results/btcc_m/ichi_vs_s65_w2_180d/
+  selection: "S>=0.65 + W2 Nmax=4 equal 25%"
+  growth_pct_after_fees: 21.8
+  max_dd_pct: -27.4
+  trades: 411

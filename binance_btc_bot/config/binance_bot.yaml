@@ -1,21 +1,20 @@
 # Binance BTC Compounding Bot — AUTHORITATIVE production configuration
 # Real trading is DISABLED by default. Do not enable without explicit operator action.
 #
-# Canonical identity (portfolio capacity IS selection):
-#   W2 exit + Ichimoku I2 first τ=3% cloud extension + Nmax=2 × 50%
+# Canonical identity:
+#   W2 exit + E2 signed S NEW_CROSS >= 0.65 + Nmax=4 × 25%
 # Mirror / discovery pointer: configs/live_production.yaml
 
 production:
-  config_version: "W2_I2_T03_N2_v1"
+  config_version: "W2_E2_S65_N4_v1"
   validated_strategy: W2
-  entry_profile: ichimoku_i2_tau
-  threshold: 0.5
-  tau: 0.03
+  entry_profile: e2
+  threshold: 0.65
   entry_rule: NEW_CROSS
   late_entry: false
   selector: null
-  fingerprint_window: "2026-06-23→2026-09-21"
-  fingerprint_note: "Capacity matrix — W2 @ 3% N=2 equal 50%"
+  fingerprint_window: "2026-03-25→2026-09-21"
+  fingerprint_note: "S65 + W2 N=4 equal 25% — 180d +21.8% / DD -27.4% after fees"
 
 exchange:
   name: binance
@@ -33,21 +32,21 @@ exchange:
 
 live:
   enabled: false          # HARD DEFAULT — never auto-enable
-  strategy: W2            # Ichimoku I2+τ=3% entry + W2 exits (5% SL / 4% act / 2% trail)
+  strategy: W2            # E2 S>=0.65 entry + W2 exits (5% SL / 4% act / 2% trail)
   selector: null
   dry_run: true
-  max_open_positions: 2
+  max_open_positions: 4
   one_position_per_symbol: true
 
 portfolio:
-  max_simultaneous_trades: 2
-  allocation_per_trade: 0.5    # 50% of trading equity per trade
-  max_total_allocation: 1.0    # 2 × 50% = 100%
+  max_simultaneous_trades: 4
+  allocation_per_trade: 0.25   # 25% of trading equity per trade
+  max_total_allocation: 1.0    # 4 × 25% = 100%
   one_position_per_symbol: true
 
 risk:
-  max_loss_per_trade: 0.025   # 2.5% equity = 50% × 5% W2 SL
-  max_allocation_pct: 0.5
+  max_loss_per_trade: 0.0125  # 1.25% equity = 25% × 5% W2 SL
+  max_allocation_pct: 0.25
   max_aggregate_exposure: 1.0
   no_leverage: true
   stale_data_max_age_sec: 30
@@ -173,20 +172,19 @@ selectors:
     kind: downside_aware
 
 entry:
-  mode: ichimoku_i2_tau
-  tau: 0.03                 # first crossing ≥ 3% above kumo top
-  long_threshold: 0.5       # binary fire score (provider returns 0/1)
+  mode: e2
+  long_threshold: 0.65      # NEW CROSS into S >= 0.65
   # null = no upper band
   upper_threshold: null
   rule: NEW_CROSS
   late_entry_enabled: false
 
-# Production score path — Ichimoku I2 + τ (see ichimoku_tau_provider).
+# Production score path — signed S via compute_all_factors → combined_score, E2 momentum.
 signal:
   interval: 15m
   lookback_bars: 1000
-  min_history_bars: 120
-  momentum_profile: ichimoku_i2_tau
+  min_history_bars: 100
+  momentum_profile: e2
   diagnostics: false
   max_closed_candle_age_sec: 1800
   signal_config_path: configs/signal_config.yaml

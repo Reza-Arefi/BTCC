@@ -13,7 +13,6 @@ from binance_btc_bot.config_loader import (
     PRODUCTION_STRATEGY,
     PRODUCTION_ENTRY_PROFILE,
     PRODUCTION_THRESHOLD,
-    PRODUCTION_TAU,
     PRODUCTION_MAX_TRADES,
     PRODUCTION_ALLOC,
     env_live_trading_enabled,
@@ -32,7 +31,6 @@ def test_production_config_loads_and_matches_freeze():
     assert cfg["signal"]["momentum_profile"] == PRODUCTION_ENTRY_PROFILE
     assert cfg["entry"]["mode"] == PRODUCTION_ENTRY_PROFILE
     assert float(cfg["entry"]["long_threshold"]) == pytest.approx(PRODUCTION_THRESHOLD)
-    assert float(cfg["entry"]["tau"]) == pytest.approx(PRODUCTION_TAU)
     assert cfg["entry"]["late_entry_enabled"] is False
     assert cfg["live"]["selector"] in (None, "null", "")
     w2 = cfg["strategies"]["W2"]

@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from binance_btc_bot.accounting.btc_accounting import TradeAccounting
 from binance_btc_bot.exchange.base import ExchangeAdapter, OrderRequest, OrderResult
@@ -94,6 +95,10 @@ class OrderLifecycle:
         self._seen_notifications: set[str] = set()
         # Idempotency: one emergency submission attempt per trade_id in-process.
         self._emergency_submitted: set[str] = set()
+        # Serializes safety cancel/replace against REST reconciliation.
+        self.protection_lock = threading.RLock()
+        # Called after a trade transitions to CLOSED (portfolio SafetyManager).
+        self.on_trade_closed: Callable[..., Any] | None = None
 
     def _notify(self, method: str, event: str, message: str, *, dedupe_key: str | None = None, **kwargs: Any) -> None:
         if dedupe_key:
@@ -743,6 +748,16 @@ class OrderLifecycle:
                 trade_id=trade_id,
                 dedupe_key=f"closed:{trade_id}",
             )
+        if self.on_trade_closed is not None:
+            try:
+                self.on_trade_closed(
+                    trade_id=trade_id,
+                    symbol=str(tr.get("symbol")),
+                    close_reason=str(close_reason or "UNKNOWN"),
+                    pnl_pct=price_pnl_pct,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.error("on_trade_closed hook failed: %s", scrub_exception(e))
         return LifecycleResult(
             ok=True,
             trade_id=trade_id,
@@ -2347,6 +2362,10 @@ class OrderLifecycle:
 
     def reconcile_rest(self, universe: list[str] | None = None) -> dict[str, Any]:
         """REST reconciliation after WS disconnect / restart (Binance = source of truth)."""
+        with self.protection_lock:
+            return self._reconcile_rest_unlocked(universe)
+
+    def _reconcile_rest_unlocked(self, universe: list[str] | None = None) -> dict[str, Any]:
         notes: list[str] = []
         closed: list[str] = []
         if self.dry_run or not self.live_enabled:

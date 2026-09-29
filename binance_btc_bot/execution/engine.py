@@ -116,9 +116,13 @@ class BinanceBotEngine:
                 "yes",
             }:
                 raise RuntimeError("Refusing LIVE-3 without BINANCE_LIVE3_AUTHORIZED=true")
+            from binance_btc_bot.config_loader import PRODUCTION_MAX_TRADES
+
             max_n = int((self.cfg.get("portfolio") or {}).get("max_simultaneous_trades") or 0)
-            if max_n != 8:
-                raise RuntimeError("LIVE-3 requires portfolio.max_simultaneous_trades=8")
+            if max_n != PRODUCTION_MAX_TRADES:
+                raise RuntimeError(
+                    f"LIVE-3 requires portfolio.max_simultaneous_trades={PRODUCTION_MAX_TRADES}"
+                )
             if oneshot:
                 raise RuntimeError("LIVE-3 cannot combine with first_trade_oneshot")
             self.dry_run = False
@@ -229,6 +233,7 @@ class BinanceBotEngine:
             max_aggregate_exposure=float(self.portfolio.max_total_allocation),
             fee_buffer_pct=float(risk.get("fee_buffer_pct") or 0.002),
         )
+        self._init_safety_manager(db_path)
         self.user_stream = UserDataStream(
             rest_reconcile=lambda: self.lifecycle.reconcile_rest(self.universe),
         )
@@ -252,6 +257,32 @@ class BinanceBotEngine:
             )
         except Exception:  # noqa: BLE001
             logger.warning("BOT_STARTED notification failed (ignored)")
+
+    def _init_safety_manager(self, db_path: str) -> None:
+        from binance_btc_bot.execution.safety_runtime import SafetyRuntime
+        from binance_btc_bot.risk.safety_manager import (
+            SafetyManager,
+            SafetyManagerConfig,
+            SafetyStateStore,
+            default_safety_state_path,
+        )
+
+        sm_cfg = SafetyManagerConfig.from_config(self.cfg)
+
+        def _notify(severity: str, event: str, message: str) -> None:
+            self._safety_notify(event, message, severity=severity)
+
+        self.safety_manager = SafetyManager(
+            sm_cfg,
+            SafetyStateStore(default_safety_state_path(db_path, sm_cfg.state_filename)),
+            notify=_notify,
+        )
+        self.safety.add_entry_guard(self.safety_manager.blocks_new_entries)
+        self.lifecycle.on_trade_closed = self.safety_manager.record_trade_closed
+        self.safety_runtime = SafetyRuntime(self, self.safety_manager)
+
+    def safety_cycle(self, *, force: bool = False) -> dict[str, Any]:
+        return self.safety_runtime.cycle(force=force)
 
     def _safety_notify(self, event: str, message: str, **kwargs: Any) -> None:
         severity = str(kwargs.pop("severity", "WARNING")).upper()
@@ -808,6 +839,8 @@ class BinanceBotEngine:
             "hour_fees_btc": hour_fees,
             "hour_net_realized_pnl_btc": hour_net,
             "hour_events": hour_events,
+            "safety_manager": self.safety_manager.status(),
+            "new_entries_allowed": self.safety.allow_new_entries(),
         }
 
     def attach_runtime_control(
@@ -884,6 +917,7 @@ class BinanceBotEngine:
             engine_view=self.control_view,
             reconcile_fn=lambda: self.lifecycle.reconcile_rest(self.universe),
             emergency_fn=emergency,
+            safety_runtime=self.safety_runtime,
         )
         self._runtime_controller = ctrl
         self._telegram_control = plane

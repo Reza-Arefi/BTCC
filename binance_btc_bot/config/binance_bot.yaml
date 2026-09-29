@@ -229,6 +229,40 @@ safety:
   halt_on_stale_data: true
   halt_on_api_failure: true
 
+# Portfolio-level safety manager (independent of entry/W2 logic).
+# Blocks NEW entries only; never changes the entry signal or normal W2 exits.
+# Stop tightening below happens ONLY while DEFENSIVE_MODE is active.
+# State persists in <sqlite dir>/safety_manager_state.json; only /restart clears it.
+safety_manager:
+  enabled: true
+  # Circuit breaker: N exchange-confirmed stop-loss closures -> SAFETY_HALT.
+  sl_halt_count: 2
+  reset_counter_on_win: true      # trailing/TP exit resets the SL counter to 0
+  sl_cooldown_minutes: 0          # optional pause after 1 SL (0 = disabled)
+  # Defensive mode trigger: >= defensive_loss_count of defensive_min_open open positions <= defensive_loss_pct.
+  defensive_min_open: 4
+  defensive_loss_count: 3
+  defensive_loss_pct: -0.020
+  # Losing-position protection (DEFENSIVE MODE ONLY). Stop = max(current stop, price*(1-trail), entry*(1+hard)).
+  loss_tighten_pct: -0.020
+  loss_tighten_trail_pct: 0.010
+  loss_strong_pct: -0.025
+  loss_strong_trail_pct: 0.005
+  loss_hard_exit_pct: -0.030      # at/below: market exit
+  # Profit protection (DEFENSIVE MODE ONLY), based on peak P&L since tracking.
+  profit_breakeven_pct: 0.010
+  breakeven_offset_pct: 0.002     # stop = entry*(1+0.2%) covers round-trip fees
+  profit_lock_pct: 0.015
+  profit_lock_stop_pct: 0.0075    # stop = entry*(1+0.75%)
+  profit_trail_pct: 0.020
+  profit_trail_distance_pct: 0.010  # stop = peak*(1-1.0%)
+  # OCO replace hygiene (Binance spot OCO cannot be amended: cancel + re-place).
+  min_stop_improvement_pct: 0.0025
+  replace_cooldown_sec: 60
+  # Fail closed: block entries if positions/prices cannot be verified.
+  monitor_interval_sec: 10
+  monitor_stale_after_sec: 120
+
 # Optional Stage-6 preflight hints (does not enable trading).
 preflight:
   # Local Stage-5/6 host egress (must match Binance API key IP allowlist).

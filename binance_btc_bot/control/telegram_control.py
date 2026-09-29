@@ -91,10 +91,12 @@ class TelegramControlPlane:
         engine_view: EngineView | None = None,
         reconcile_fn: ReconcileFn | None = None,
         emergency_fn: EmergencyFn | None = None,
+        safety_runtime: Any | None = None,
         poll_interval_sec: float = 1.0,
         long_poll_sec: int = 25,
     ) -> None:
         self.controller = controller
+        self.safety_runtime = safety_runtime
         token = (bot_token if bot_token is not None else os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
         self.chat_id = (chat_id if chat_id is not None else os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
         self.api = TelegramAPI(token)
@@ -170,7 +172,19 @@ class TelegramControlPlane:
         if dispatch:
             return self._handle_dispatch(str(dispatch), chat_id=chat_id)
         if result.data.get("startup_checks"):
-            return self._run_startup_checks(result.message)
+            return self._run_startup_checks(result.message) + self._safety_block_note()
+        if result.data.get("safety_close"):
+            if self.safety_runtime is None:
+                return "Close unavailable (safety runtime not attached)."
+            try:
+                out = self.safety_runtime.close(result.data.get("symbol"))
+            except Exception as e:  # noqa: BLE001
+                return f"Close failed: {scrub_exception(e)}"
+            if not out:
+                return "No matching open position."
+            return result.message + "\n" + "\n".join(
+                f"{r.get('trade_id', '')[:8]}: {r.get('result')}" for r in out
+            )
         if result.data.get("emergency") and self.emergency_fn:
             try:
                 er = self.emergency_fn()
@@ -198,11 +212,33 @@ class TelegramControlPlane:
             self.controller.fail_closed_halt(f"STARTUP_RECONCILE_ERROR:{scrub_exception(e)}")
             return f"FAIL CLOSED: reconciliation error after resume — HALTED.\n{scrub_exception(e)}"
 
+    def _safety_block_note(self) -> str:
+        if self.safety_runtime is None:
+            return ""
+        reason = self.safety_runtime.manager.blocking_reason()
+        if not reason:
+            return ""
+        return f"\n\n⚠️ New entries still BLOCKED by safety manager:\n{reason}\nUse /restart (runs safety checks)."
+
     def _handle_dispatch(self, name: str, *, chat_id: str) -> str:
         if name == "help":
             return HELP_TEXT
+        if name == "restart":
+            if self.safety_runtime is None:
+                return "Restart unavailable (safety runtime not attached)."
+            try:
+                return self.safety_runtime.restart()
+            except Exception as e:  # noqa: BLE001
+                return f"🚨 RESTART BLOCKED\n\nFailed checks:\n- {scrub_exception(e)}\n\nNew entries remain BLOCKED."
+        if name == "risk":
+            if self.safety_runtime is None:
+                return "Risk view unavailable (safety runtime not attached)."
+            return self.safety_runtime.risk_text()
         view = (self.engine_view() if self.engine_view else {}) or {}
         if name == "status":
+            if self.safety_runtime is not None:
+                return (self.safety_runtime.status_text(view, self.controller)
+                        + "\n\n— details —\n" + format_status(view, self.controller))
             return format_status(view, self.controller)
         if name == "config":
             return format_config(view, self.controller)

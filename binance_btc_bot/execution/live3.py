@@ -1073,6 +1073,15 @@ class Live3Session:
                     out.notes.append("stopped via Telegram — existing positions untouched")
                     break
 
+            if hasattr(engine, "safety_cycle"):
+                try:
+                    engine.safety_cycle()
+                except Exception as e:  # noqa: BLE001
+                    logger.error("safety cycle failed: %s", scrub_exception(e))
+                    sm = getattr(engine, "safety_manager", None)
+                    if sm is not None:
+                        sm.mark_monitor_failed(f"safety cycle error: {scrub_exception(e)}")
+
             if not engine.safety.allow_new_entries():
                 now = time.time()
                 if now - last_reconcile >= self.reconcile_every_sec:

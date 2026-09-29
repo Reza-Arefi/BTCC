@@ -435,6 +435,16 @@ class RuntimeController:
                 return self._cmd_confirm(chat_id=str(chat_id))
             if cmd == "/cancel":
                 return self._cmd_cancel(chat_id=str(chat_id))
+            if cmd in {"/restart", "/risk"}:
+                self._audit(chat_id=str(chat_id), command=raw, old=None, new=None,
+                            result="DISPATCHED", authorized=True)
+                return ControlResult(True, cmd, data={"dispatch": cmd[1:], "args": args})
+            if cmd == "/close_all":
+                return self._cmd_close_request(None, chat_id=str(chat_id), raw=raw)
+            if cmd == "/close":
+                if len(args) != 1:
+                    return ControlResult(False, "Usage: /close SYMBOL (e.g. /close ETHBTC)")
+                return self._cmd_close_request(args[0].upper(), chat_id=str(chat_id), raw=raw)
             if cmd in {
                 "/status",
                 "/config",
@@ -507,6 +517,36 @@ class RuntimeController:
             "RUNNING — new entries allowed after safety checks. Existing positions unchanged.",
             data={"mode": "RUNNING", "startup_checks": True},
         )
+
+    def _cmd_close_request(self, symbol: str | None, *, chat_id: str, raw: str) -> ControlResult:
+        with self._lock:
+            self.state.pending = {
+                "action": "close",
+                "payload": {"symbol": symbol},
+                "created_at": time.time(),
+                "chat_id": chat_id,
+            }
+            self._persist()
+        self._audit(chat_id=chat_id, command=raw, old=None, new=f"close:{symbol or 'ALL'}",
+                    result="NEED_CONFIRM", authorized=True)
+        target = symbol or "ALL open positions"
+        return ControlResult(
+            True,
+            f"⚠️ CLOSE {target}\nThis cancels the protective OCO and sells at MARKET.\n\nReply:\n/confirm  or  /cancel",
+            need_confirm=True,
+        )
+
+    def resume_after_safety_restart(self) -> None:
+        """Successful safety /restart: set RUNNING unless runtime state is corrupt."""
+        with self._lock:
+            if self.state.corrupt:
+                return
+            old = self.state.mode
+            self.state.mode = OperatorMode.RUNNING.value
+            self.state.pending = None
+            self._persist()
+        self._audit(chat_id="system", command="/restart", old=old, new="RUNNING",
+                    result="SAFETY_CHECKS_PASSED", authorized=True)
 
     def _cmd_strategy(self, args: list[str], *, chat_id: str, raw: str) -> ControlResult:
         if len(args) != 1:
@@ -691,6 +731,14 @@ class RuntimeController:
                 self.state.max_simultaneous_trades = n
                 new = n
                 old = old_max
+            elif action == "close":
+                self.state.pending = None
+                self._persist()
+                symbol = payload.get("symbol")
+                self._audit(chat_id=chat_id, command="/confirm", old=None, new=f"close:{symbol or 'ALL'}",
+                            result="CONFIRMED", authorized=True)
+                return ControlResult(True, f"Closing {symbol or 'ALL positions'}…",
+                                     data={"safety_close": True, "symbol": symbol})
             else:
                 return ControlResult(False, f"Unknown pending action {action}")
             self.state.pending = None
@@ -751,6 +799,12 @@ Runtime (confirm when prompted):
 State:
 /start  /resume  /pause  /stop
 /emergency → /confirm_emergency
+
+Safety manager:
+/restart  — clear SAFETY_HALT / DEFENSIVE_MODE after health checks
+/risk     — safety state + protection levels
+/close SYMBOL  /close_all  (then /confirm)
+/resume never clears a SAFETY_HALT or DEFENSIVE_MODE.
 
 Read-only:
 /status  /config  /positions  /balance  /health

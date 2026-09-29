@@ -25,6 +25,8 @@ class SafetySystem:
     on_notify: NotifyFn | None = None
     # Optional operator/runtime gate (pause/stop/corrupt). Does not replace HALT.
     _entries_blocker: Callable[[], bool] | None = field(default=None, repr=False)
+    # Independent guards (portfolio SafetyManager); not replaced by set_entries_blocker.
+    _entry_guards: list[Callable[[], bool]] = field(default_factory=list, repr=False)
     # Dedupe Telegram/operator spam for the same unresolved condition.
     _warn_last_notified: dict[str, float] = field(default_factory=dict, repr=False)
     warn_notify_cooldown_sec: float = 900.0
@@ -33,12 +35,18 @@ class SafetySystem:
         """Block NEW entries when fn() is True (e.g. Telegram PAUSED/STOPPED)."""
         self._entries_blocker = fn
 
+    def add_entry_guard(self, fn: Callable[[], bool]) -> None:
+        """Block NEW entries when fn() is True. Guards accumulate and are never cleared."""
+        self._entry_guards.append(fn)
+
     def allow_new_entries(self) -> bool:
         if self.state == SafetyState.HALT:
             return False
-        if self._entries_blocker is not None:
+        for blocker in [self._entries_blocker, *self._entry_guards]:
+            if blocker is None:
+                continue
             try:
-                if bool(self._entries_blocker()):
+                if bool(blocker()):
                     return False
             except Exception:  # noqa: BLE001 — fail closed
                 return False

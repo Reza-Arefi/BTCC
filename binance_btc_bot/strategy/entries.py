@@ -6,14 +6,17 @@ Entry rule (live layer):
   NEW CROSS INTO S >= long_threshold (default 0.65)
   Requires a prior observation of S < threshold on this symbol.
   Stay-in-zone does NOT open another trade.
+  A cross inside the weekly entry blackout is consumed (not deferred).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from binance_btc_bot.portfolio.manager import PortfolioManager, ReserveResult
+from binance_btc_bot.strategy.entry_blackout import EntryBlackout
 
 CLS_ELIGIBLE = "ELIGIBLE"
 CLS_BELOW_THRESHOLD = "BELOW_THRESHOLD"
@@ -23,6 +26,7 @@ CLS_SAME_PAIR_OPEN = "SAME_PAIR_ALREADY_OPEN"
 CLS_MAX_OPEN = "MAX_OPEN_TRADES"
 CLS_HALTED = "SAFETY_HALT"
 CLS_NEED_PRIOR_BELOW = "NEED_PRIOR_BELOW"
+CLS_ENTRY_BLACKOUT = "ENTRY_BLACKOUT"
 
 
 @dataclass
@@ -118,7 +122,9 @@ class LiveEntryEngine:
         max_open: int = 8,
         one_per_symbol: bool = True,
         portfolio: PortfolioManager | None = None,
+        blackout: EntryBlackout | None = None,
     ) -> None:
+        self.blackout = blackout
         self.long_threshold = float(long_threshold)
         self.upper_threshold = float(upper_threshold) if upper_threshold is not None else None
         self.strategy_key = str(strategy_key).upper()
@@ -140,6 +146,7 @@ class LiveEntryEngine:
         strategy_key: str | None = None,
         selector_key: str | None = None,
         reserve_slot: bool = False,
+        now: datetime | None = None,
     ) -> EntryDecision:
         sym = symbol.upper()
         strat = str(strategy_key or self.strategy_key).upper()
@@ -165,6 +172,12 @@ class LiveEntryEngine:
             }.get(reason, reason)
             return EntryDecision(
                 False, sym, strat, sel, score, cls, reason, relative_price, crossed_into=False
+            )
+
+        if self.blackout is not None and self.blackout.is_blocked(now):
+            return EntryDecision(
+                False, sym, strat, sel, score, CLS_ENTRY_BLACKOUT, CLS_ENTRY_BLACKOUT,
+                relative_price, crossed_into=True,
             )
 
         if self.portfolio is not None and reserve_slot:

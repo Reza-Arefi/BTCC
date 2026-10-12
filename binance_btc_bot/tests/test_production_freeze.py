@@ -23,6 +23,20 @@ from binance_btc_bot.config_loader import (
 )
 from binance_btc_bot.exchange.binance import BinanceExchange
 from binance_btc_bot.storage.database import BotDatabase
+from binance_btc_bot.strategy.trails import get_strategy
+
+
+def test_production_freeze_rejects_missing_blackout(tmp_path: Path):
+    import yaml
+
+    from binance_btc_bot.config_loader import DEFAULT_CONFIG_PATH
+
+    raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    raw["entry"]["blackout"]["enabled"] = False
+    p = tmp_path / "cfg.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="entry.blackout"):
+        load_config(p)
 
 
 def test_production_config_loads_and_matches_freeze():
@@ -33,10 +47,13 @@ def test_production_config_loads_and_matches_freeze():
     assert float(cfg["entry"]["long_threshold"]) == pytest.approx(PRODUCTION_THRESHOLD)
     assert cfg["entry"]["late_entry_enabled"] is False
     assert cfg["live"]["selector"] in (None, "null", "")
-    w2 = cfg["strategies"]["W2"]
-    assert float(w2["arm_sl_activation_trail"]) == pytest.approx(0.05)
-    assert float(w2["activation"]) == pytest.approx(0.04)
-    assert float(w2["trail_distance"]) == pytest.approx(0.02)
+    assert PRODUCTION_STRATEGY == "TRN4"
+    trn4 = cfg["strategies"]["TRN4"]
+    assert float(trn4["arm_sl_activation_trail"]) == pytest.approx(0.05)
+    assert float(trn4["activation"]) == pytest.approx(0.04)
+    assert float(trn4["trail_distance"]) == pytest.approx(0.005)
+    assert get_strategy("TRN4", cfg["strategies"]).trail_distance_bips == 50
+    assert cfg["_production_fingerprint"]["entry_blackout"] == "FRI 12:00 -> MON 00:00 UTC"
     assert int(cfg["portfolio"]["max_simultaneous_trades"]) == PRODUCTION_MAX_TRADES
     assert float(cfg["portfolio"]["allocation_per_trade"]) == pytest.approx(PRODUCTION_ALLOC)
     assert (cfg.get("production") or {}).get("config_version") == PRODUCTION_CONFIG_VERSION

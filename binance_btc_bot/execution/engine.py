@@ -35,6 +35,7 @@ from binance_btc_bot.risk.safety import SafetySystem
 from binance_btc_bot.secrets import scrub_exception, scrub_text
 from binance_btc_bot.storage.database import BotDatabase
 from binance_btc_bot.strategy.entries import LiveEntryEngine
+from binance_btc_bot.strategy.entry_blackout import EntryBlackout
 from binance_btc_bot.strategy.provider import StrategyProvider, build_strategy_provider
 
 logger = logging.getLogger(__name__)
@@ -202,6 +203,7 @@ class BinanceBotEngine:
             max_open=self.portfolio.max_simultaneous_trades,
             one_per_symbol=self.portfolio.config.one_position_per_symbol,
             portfolio=self.portfolio,
+            blackout=EntryBlackout.from_config(entry_cfg.get("blackout")),
         )
         self.entry_exec = EntryExecutor(
             self.exchange,

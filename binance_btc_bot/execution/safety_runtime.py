@@ -2,8 +2,8 @@
 
 Exchange side effects happen only here and only when the engine is live-enabled:
 
-* ``replace_stop``: cancel the trade's W2 OCO and re-place it with a tighter
-  STOP_LOSS leg (same W2 trailing TAKE_PROFIT delta). If the re-place fails the
+* ``replace_stop``: cancel the trade's OCO and re-place it with a tighter
+  STOP_LOSS leg (same trailing TAKE_PROFIT delta as the trade's strategy). If the re-place fails the
   position is sold at market; if that also fails the trade is marked
   PROTECTION_FAILED and everything halts.
 * ``exit_position``: cancel OCO → MARKET SELL → close through the lifecycle.

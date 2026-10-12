@@ -12,17 +12,21 @@
 authoritative_runtime_config: binance_btc_bot/config/binance_bot.yaml
 
 production:
-  config_version: "W2_E2_S65_N4_v1"
-  strategy: W2
+  config_version: "TRN4_E2_S65_N4_WKND_v1"
+  strategy: TRN4
   entry_profile: e2
   threshold: 0.65
   entry_rule: NEW_CROSS
   late_entry: false
   selector: null
-  w2:
+  trn4:
     stop_loss: 0.05        # 5%
     activation: 0.04       # 4%
-    trail_distance: 0.02   # 2%
+    trail_distance: 0.005  # 0.5% (trailingDelta 50 BIPS)
+  entry_blackout:
+    timezone: UTC
+    start: "FRI 12:00"
+    end: "MON 00:00"       # no NEW entries; open positions keep their OCO
   portfolio:
     max_simultaneous_trades: 4
     allocation_per_trade: 0.25
@@ -30,7 +34,7 @@ production:
   dry_run_default: true
   note: >
     MEXC H23 bot is a separate BTC_USD COIN-M product and is NOT this strategy.
-    ALT/BTC E2 S>=0.65 + W2 N=4 runs on Binance spot (this config).
+    ALT/BTC E2 S>=0.65 + TRN4 N=4 + weekend entry block runs on Binance spot (this config).
 
 safety:
   require_env_LIVE_TRADING_ENABLED: true
@@ -41,9 +45,11 @@ safety:
     Default construction never submits orders.
 
 validated_fingerprint:
-  window: "2026-03-25 → 2026-09-21"
-  source: results/btcc_m/ichi_vs_s65_w2_180d/
-  selection: "S>=0.65 + W2 Nmax=4 equal 25%"
-  growth_pct_after_fees: 21.8
-  max_dd_pct: -27.4
-  trades: 411
+  window: "2026-09-13 → 2026-10-12 (149 live entries, W2 + T30 cohorts)"
+  source: binance_btc_bot/tools/run_weekend_window_grid_20261012.py  # → results/weekend_window_grid_2026-10-12/ (local)
+  selection: "TRN4 SL5 + FRI 12:00→MON 00:00 UTC entry block, Nmax=4 equal 25%"
+  growth_pct_after_fees: 26.2
+  max_dd_pct: -4.3
+  profit_factor: 2.32
+  trades: 49
+  caveat: "In-sample selection on ~1 month of live entries; live slippage ~0.2pp/trade not included."

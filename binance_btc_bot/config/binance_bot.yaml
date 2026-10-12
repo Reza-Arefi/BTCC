@@ -2,19 +2,20 @@
 # Real trading is DISABLED by default. Do not enable without explicit operator action.
 #
 # Canonical identity:
-#   W2 exit + E2 signed S NEW_CROSS >= 0.65 + Nmax=4 × 25%
+#   TRN4 exit + E2 signed S NEW_CROSS >= 0.65 + Nmax=4 × 25%
+#   + no new entries FRI 12:00 → MON 00:00 UTC
 # Mirror / discovery pointer: configs/live_production.yaml
 
 production:
-  config_version: "W2_E2_S65_N4_v1"
-  validated_strategy: W2
+  config_version: "TRN4_E2_S65_N4_WKND_v1"
+  validated_strategy: TRN4
   entry_profile: e2
   threshold: 0.65
   entry_rule: NEW_CROSS
   late_entry: false
   selector: null
-  fingerprint_window: "2026-03-25→2026-09-21"
-  fingerprint_note: "S65 + W2 N=4 equal 25% — 180d +21.8% / DD -27.4% after fees"
+  fingerprint_window: "live trades 2026-09-13→2026-10-12 (W2 + T30 cohorts, 149 entries)"
+  fingerprint_note: "TRN4 SL5 + FRI12→MON00 block N=4 25% — replay +26.2% / DD -4.3% / PF 2.32 after fees"
 
 exchange:
   name: binance
@@ -32,7 +33,7 @@ exchange:
 
 live:
   enabled: false          # HARD DEFAULT — never auto-enable
-  strategy: W2            # E2 S>=0.65 entry + W2 exits (5% SL / 4% act / 2% trail)
+  strategy: TRN4          # E2 S>=0.65 entry + TRN4 exits (5% SL / 4% act / 0.5% trail)
   selector: null
   dry_run: true
   max_open_positions: 4
@@ -45,7 +46,7 @@ portfolio:
   one_position_per_symbol: true
 
 risk:
-  max_loss_per_trade: 0.0125  # 1.25% equity = 25% × 5% W2 SL
+  max_loss_per_trade: 0.0125  # 1.25% equity = 25% × 5% TRN4 SL
   max_allocation_pct: 0.25
   max_aggregate_exposure: 1.0
   no_leverage: true
@@ -155,6 +156,11 @@ strategies:
     arm_sl_activation_trail: 0.05
     activation: 0.04
     trail_distance: 0.02
+  # Live-trade replay winner — W2 stop/activation with tight 0.5% trail (50 BIPS).
+  TRN4:
+    arm_sl_activation_trail: 0.05
+    activation: 0.04
+    trail_distance: 0.005
 
 # Research-only selector definitions (LIVE_SELECTOR = null).
 selectors:
@@ -178,6 +184,13 @@ entry:
   upper_threshold: null
   rule: NEW_CROSS
   late_entry_enabled: false
+  # Weekly window with NO new entries (open positions keep their OCO).
+  # A cross inside the window is consumed, not deferred to Monday.
+  blackout:
+    enabled: true
+    timezone: UTC
+    start: "FRI 12:00"
+    end: "MON 00:00"
 
 # Production score path — signed S via compute_all_factors → combined_score, E2 momentum.
 signal:
@@ -229,8 +242,8 @@ safety:
   halt_on_stale_data: true
   halt_on_api_failure: true
 
-# Portfolio-level safety manager (independent of entry/W2 logic).
-# Blocks NEW entries only; never changes the entry signal or normal W2 exits.
+# Portfolio-level safety manager (independent of entry/exit-strategy logic).
+# Blocks NEW entries only; never changes the entry signal or normal strategy exits.
 # Stop tightening below happens ONLY while DEFENSIVE_MODE is active.
 # State persists in <sqlite dir>/safety_manager_state.json; only /restart clears it.
 safety_manager:

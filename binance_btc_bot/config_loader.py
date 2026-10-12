@@ -9,21 +9,26 @@ from typing import Any
 
 import yaml
 
+from binance_btc_bot.strategy.entry_blackout import EntryBlackout, format_week_time, parse_week_time
+
 PACKAGE_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PACKAGE_ROOT.parent
 DEFAULT_CONFIG_PATH = PACKAGE_ROOT / "config" / "binance_bot.yaml"
 PRODUCTION_POINTER_PATH = REPO_ROOT / "configs" / "live_production.yaml"
 
-# Frozen production identity — S>=0.65 + W2 capacity sweep / 180d comparison:
-#   E2 signed S NEW_CROSS >= 0.65, W2 exits, Nmax=4, equal 25% allocation.
-PRODUCTION_CONFIG_VERSION = "W2_E2_S65_N4_v1"
-PRODUCTION_STRATEGY = "W2"
+# Frozen production identity — live-trade replay 2026-10-12 (W2 + T30 cohorts):
+#   E2 signed S NEW_CROSS >= 0.65, TRN4 exits, Nmax=4, equal 25% allocation,
+#   no new entries FRI 12:00 → MON 00:00 UTC.
+PRODUCTION_CONFIG_VERSION = "TRN4_E2_S65_N4_WKND_v1"
+PRODUCTION_STRATEGY = "TRN4"
 PRODUCTION_ENTRY_PROFILE = "e2"
 PRODUCTION_THRESHOLD = 0.65
 PRODUCTION_LATE_ENTRY = False
 PRODUCTION_MAX_TRADES = 4
 PRODUCTION_ALLOC = 0.25
-PRODUCTION_MAX_LOSS = 0.0125  # 25% allocation × 5% W2 SL
+PRODUCTION_MAX_LOSS = 0.0125  # 25% allocation × 5% TRN4 SL
+PRODUCTION_BLACKOUT_START = "FRI 12:00"
+PRODUCTION_BLACKOUT_END = "MON 00:00"
 
 FROZEN_STRATEGIES = {
     "T1": (0.0075, 0.0075, 0.0025),
@@ -44,6 +49,8 @@ FROZEN_STRATEGIES = {
     "T30": (0.03, 0.01, 0.0025),
     # W2 = research wide momentum trail (SL 5% / act 4% / trail 2%).
     "W2": (0.05, 0.04, 0.02),
+    # TRN4 = SL 5% / act 4% / trail 0.5% (trailingDelta 50 BIPS).
+    "TRN4": (0.05, 0.04, 0.005),
 }
 
 EXPECTED_BTC_PAIRS = (
@@ -86,6 +93,12 @@ EXPECTED_BTC_PAIRS = (
     "XTZBTC",
     "ZECBTC",
 )
+
+
+def _production_blackout_label() -> str:
+    start = format_week_time(parse_week_time(PRODUCTION_BLACKOUT_START))
+    end = format_week_time(parse_week_time(PRODUCTION_BLACKOUT_END))
+    return f"{start} -> {end} UTC"
 
 
 def env_live_trading_enabled() -> bool:
@@ -134,7 +147,7 @@ def _validate_config(cfg: dict[str, Any]) -> None:
     risk = cfg.get("risk") or {}
     max_loss = float(risk.get("max_loss_per_trade", PRODUCTION_MAX_LOSS))
     if abs(max_loss - PRODUCTION_MAX_LOSS) > 1e-12:
-        raise ValueError(f"risk.max_loss_per_trade must be {PRODUCTION_MAX_LOSS} for W2 25%×5% SL")
+        raise ValueError(f"risk.max_loss_per_trade must be {PRODUCTION_MAX_LOSS} for 25%×5% SL")
     risk = dict(risk)
     risk["max_allocation_pct"] = portfolio.allocation_per_trade
     risk["max_aggregate_exposure"] = portfolio.max_total_allocation
@@ -152,6 +165,7 @@ def _validate_config(cfg: dict[str, Any]) -> None:
     rule = str(entry.get("rule") or "NEW_CROSS").upper().replace("_", "")
     if rule not in {"NEWCROSS", ""}:
         raise ValueError("entry.rule must be NEW_CROSS")
+    blackout = EntryBlackout.from_config(entry.get("blackout"))
 
     signal = cfg.get("signal") or {}
     mom = str(signal.get("momentum_profile") or PRODUCTION_ENTRY_PROFILE).lower()
@@ -167,6 +181,10 @@ def _validate_config(cfg: dict[str, Any]) -> None:
     if ver == PRODUCTION_CONFIG_VERSION or prod.get("validated_strategy"):
         if str(live.get("strategy") or "").upper() != PRODUCTION_STRATEGY:
             raise ValueError(f"live.strategy must be {PRODUCTION_STRATEGY} for production freeze")
+        if blackout is None or blackout.label() != _production_blackout_label():
+            raise ValueError(
+                f"entry.blackout must be enabled {_production_blackout_label()} for production freeze"
+            )
 
     strategies = cfg.get("strategies") or {}
     for key, (sl, act, dist) in FROZEN_STRATEGIES.items():
@@ -195,9 +213,11 @@ def production_fingerprint(cfg: dict[str, Any]) -> dict[str, Any]:
     live = cfg.get("live") or {}
     entry = cfg.get("entry") or {}
     signal = cfg.get("signal") or {}
-    w2 = (cfg.get("strategies") or {}).get("W2") or {}
+    strategy_key = str(live.get("strategy") or "").upper()
+    exit_geom = (cfg.get("strategies") or {}).get(strategy_key) or {}
     port = cfg.get("_portfolio") or cfg.get("portfolio") or {}
     prod = cfg.get("production") or {}
+    blackout = EntryBlackout.from_config(entry.get("blackout"))
     return {
         "config_version": str(prod.get("config_version") or PRODUCTION_CONFIG_VERSION),
         "strategy": str(live.get("strategy") or "").upper(),
@@ -208,9 +228,10 @@ def production_fingerprint(cfg: dict[str, Any]) -> dict[str, Any]:
         "entry_rule": str(entry.get("rule") or "NEW_CROSS").upper(),
         "late_entry": bool(entry.get("late_entry_enabled", False)),
         "selector": live.get("selector"),
-        "w2_sl": float(w2.get("arm_sl_activation_trail") or 0),
-        "w2_activation": float(w2.get("activation") or 0),
-        "w2_trail": float(w2.get("trail_distance") or 0),
+        "exit_sl": float(exit_geom.get("arm_sl_activation_trail") or 0),
+        "exit_activation": float(exit_geom.get("activation") or 0),
+        "exit_trail": float(exit_geom.get("trail_distance") or 0),
+        "entry_blackout": blackout.label() if blackout is not None else "OFF",
         "max_trades": int(port.get("max_simultaneous_trades") or 0),
         "allocation": float(port.get("allocation_per_trade") or 0),
         "live_enabled_yaml": bool(live.get("enabled", False)),
@@ -234,12 +255,15 @@ def validate_production_freeze(cfg: dict[str, Any]) -> list[str]:
         errs.append("late_entry must be false")
     if fp["selector"] not in (None, "null", ""):
         errs.append("selector must be null")
-    if abs(float(fp["w2_sl"]) - 0.05) > 1e-12:
-        errs.append("W2 SL must be 0.05")
-    if abs(float(fp["w2_activation"]) - 0.04) > 1e-12:
-        errs.append("W2 activation must be 0.04")
-    if abs(float(fp["w2_trail"]) - 0.02) > 1e-12:
-        errs.append("W2 trail must be 0.02")
+    sl, act, dist = FROZEN_STRATEGIES[PRODUCTION_STRATEGY]
+    if abs(float(fp["exit_sl"]) - sl) > 1e-12:
+        errs.append(f"{PRODUCTION_STRATEGY} SL must be {sl}")
+    if abs(float(fp["exit_activation"]) - act) > 1e-12:
+        errs.append(f"{PRODUCTION_STRATEGY} activation must be {act}")
+    if abs(float(fp["exit_trail"]) - dist) > 1e-12:
+        errs.append(f"{PRODUCTION_STRATEGY} trail must be {dist}")
+    if fp["entry_blackout"] != _production_blackout_label():
+        errs.append(f"entry_blackout={fp['entry_blackout']} (expected {_production_blackout_label()})")
     if int(fp.get("max_trades") or 0) != PRODUCTION_MAX_TRADES:
         errs.append(f"max_trades={fp.get('max_trades')} (expected {PRODUCTION_MAX_TRADES})")
     if abs(float(fp.get("allocation") or 0) - PRODUCTION_ALLOC) > 1e-12:
@@ -262,9 +286,10 @@ def format_check_config_report(cfg: dict[str, Any]) -> str:
         f"entry_rule:           {fp['entry_rule']}",
         f"late_entry:           {fp['late_entry']}",
         f"selector:             {fp['selector']}",
-        f"W2 SL:                {fp['w2_sl']} (5%)",
-        f"W2 activation:        {fp['w2_activation']} (4%)",
-        f"W2 trail:             {fp['w2_trail']} (2%)",
+        f"exit SL:              {fp['exit_sl']}",
+        f"exit activation:      {fp['exit_activation']}",
+        f"exit trail:           {fp['exit_trail']}",
+        f"entry blackout:       {fp['entry_blackout']}",
         f"max_trades:           {fp.get('max_trades')}",
         f"allocation:           {fp.get('allocation')}",
         f"live.enabled (YAML):  {fp['live_enabled_yaml']}",

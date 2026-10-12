@@ -3,13 +3,14 @@
 HARD RULES
 ----------
 * Default on-disk YAML stays LIVE=false / DRY_RUN=true / max=2.
-* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, W2, NONE, max=4,
-  allocation 25%, total cap 100% (4 × 25%), E2 S>=0.65 NEW_CROSS.
+* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, TRN4, NONE, max=4,
+  allocation 25%, total cap 100% (4 × 25%), E2 S>=0.65 NEW_CROSS,
+  no new entries FRI 12:00 → MON 00:00 UTC.
 * Preflight never places real orders and never auto-arms.
 * Arm only via --live3-arm --authorize-live after LIVE_3_PREFLIGHT=PASS
   with BINANCE_LIVE3_AUTHORIZED=true.
 * Entry: E2 signed S, NEW CROSS into S >= 0.65 on closed 15m bar.
-* Live W2 is fixed OCO: SL 5%, activation 4%, trail 2%.
+* Live TRN4 is fixed OCO: SL 5%, activation 4%, trail 0.5% (50 BIPS).
 """
 
 from __future__ import annotations
@@ -24,7 +25,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from binance_btc_bot.config_loader import FROZEN_STRATEGIES, load_config
+from binance_btc_bot.config_loader import (
+    FROZEN_STRATEGIES,
+    PRODUCTION_BLACKOUT_END,
+    PRODUCTION_BLACKOUT_START,
+    PRODUCTION_CONFIG_VERSION,
+    PRODUCTION_STRATEGY,
+    load_config,
+)
 from binance_btc_bot.control.runtime import (
     OperatorMode,
     RuntimeControlState,
@@ -36,6 +44,7 @@ from binance_btc_bot.notifications.timezone_brt import DISPLAY_TZ, format_brt
 from binance_btc_bot.portfolio.manager import PortfolioManager
 from binance_btc_bot.preflight import PreflightReport, run_preflight
 from binance_btc_bot.secrets import scrub_exception
+from binance_btc_bot.strategy.entry_blackout import EntryBlackout
 from binance_btc_bot.strategy.trails import get_strategy
 
 logger = logging.getLogger(__name__)
@@ -44,10 +53,17 @@ LIVE3_MAX = 4
 LIVE3_ALLOC = 0.25
 LIVE3_TOTAL_CAP = 1.0  # 4 × 25%
 LIVE3_THRESHOLD = 0.65
-LIVE3_RISK = 0.0125  # 25% × 5% W2 SL
+LIVE3_RISK = 0.0125  # 25% × 5% TRN4 SL
 LIVE3_PREVIOUS_MAX = 2  # prior W2_I2_T03_N2 cap (for one-shot CONFIG UPDATED notify)
-LIVE3_STRATEGY = "W2"
+LIVE3_STRATEGY = PRODUCTION_STRATEGY
 LIVE3_STRATEGY_GEOM = FROZEN_STRATEGIES[LIVE3_STRATEGY]
+LIVE3_BLACKOUT = {
+    "enabled": True,
+    "timezone": "UTC",
+    "start": PRODUCTION_BLACKOUT_START,
+    "end": PRODUCTION_BLACKOUT_END,
+}
+LIVE3_BLACKOUT_LABEL = EntryBlackout.from_config(LIVE3_BLACKOUT).label()
 
 
 def build_live3_target_config(base: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -80,12 +96,13 @@ def build_live3_target_config(base: dict[str, Any] | None = None) -> dict[str, A
     entry["mode"] = "e2"
     entry["late_entry_enabled"] = False
     entry["rule"] = "NEW_CROSS"
+    entry["blackout"] = dict(LIVE3_BLACKOUT)
     cfg["entry"] = entry
     signal = dict(cfg.get("signal") or {})
     signal["momentum_profile"] = "e2"
     cfg["signal"] = signal
     prod = dict(cfg.get("production") or {})
-    prod["config_version"] = "W2_E2_S65_N4_v1"
+    prod["config_version"] = PRODUCTION_CONFIG_VERSION
     prod["validated_strategy"] = LIVE3_STRATEGY
     prod["entry_profile"] = "e2"
     prod["threshold"] = LIVE3_THRESHOLD
@@ -355,10 +372,18 @@ def run_live3_preflight(
         f"allocation_per_trade={LIVE3_ALLOC*100:.0f}%",
         "PASS" if abs(float(port.get("allocation_per_trade") or 0) - LIVE3_ALLOC) < 1e-12 else "FAIL",
     )
+    thr_ok = abs(float(entry.get("long_threshold") or 0) - LIVE3_THRESHOLD) < 1e-12
+    try:
+        bo = EntryBlackout.from_config(entry.get("blackout"))
+        bo_label = bo.label() if bo is not None else "OFF"
+    except ValueError as e:
+        bo_label = f"INVALID ({e})"
+    bo_ok = bo_label == LIVE3_BLACKOUT_LABEL
     out.add(
         7,
-        f"threshold={LIVE3_THRESHOLD}",
-        "PASS" if abs(float(entry.get("long_threshold") or 0) - LIVE3_THRESHOLD) < 1e-12 else "FAIL",
+        f"threshold={LIVE3_THRESHOLD} + entry blackout {LIVE3_BLACKOUT_LABEL}",
+        "PASS" if (thr_ok and bo_ok) else "FAIL",
+        f"threshold={entry.get('long_threshold')} blackout={bo_label}",
     )
     out.add(
         8,

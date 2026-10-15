@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from binance_btc_bot.config_loader import FROZEN_STRATEGIES
+from binance_btc_bot.config_loader import FROZEN_MAX_HOLD_HOURS, FROZEN_STRATEGIES
 from binance_btc_bot.exchange.base import SymbolInfo, TrailingOcoRequest
 
 
@@ -19,10 +19,17 @@ class TrailStrategy:
     arm_sl_activation_trail: float
     activation: float
     trail_distance: float
+    # 0 = no time exit. Otherwise the position is market-closed after this many hours.
+    max_hold_hours: float = 0.0
 
     @property
     def stop_loss_pct(self) -> float:
         return self.arm_sl_activation_trail
+
+    @property
+    def fixed_take_profit(self) -> bool:
+        """trail_distance 0 = the above leg is a plain TAKE_PROFIT at entry*(1+activation)."""
+        return self.trail_distance_bips == 0
 
     @property
     def trail_distance_bips(self) -> int:
@@ -39,11 +46,13 @@ def get_strategy(key: str, strategies_cfg: Mapping[str, Any] | None = None) -> T
             arm_sl_activation_trail=float(raw["arm_sl_activation_trail"]),
             activation=float(raw["activation"]),
             trail_distance=float(raw["trail_distance"]),
+            max_hold_hours=float(raw.get("max_hold_hours") or 0.0),
         )
     if k not in FROZEN_STRATEGIES:
         raise KeyError(f"unknown strategy {key}")
     sl, act, dist = FROZEN_STRATEGIES[k]
-    return TrailStrategy(key=k, arm_sl_activation_trail=sl, activation=act, trail_distance=dist)
+    return TrailStrategy(key=k, arm_sl_activation_trail=sl, activation=act, trail_distance=dist,
+                         max_hold_hours=float(FROZEN_MAX_HOLD_HOURS.get(k, 0.0)))
 
 
 def all_strategies(strategies_cfg: Mapping[str, Any] | None = None) -> dict[str, TrailStrategy]:
@@ -95,6 +104,8 @@ def map_trail_to_binance_oco(
       is the economic exit while the hard SL remains a crash safety net.
     - Contingent MARKET types (TAKE_PROFIT / STOP_LOSS) avoid limit slippage
       buffers; LIMIT variants would require an explicit price buffer.
+    - trail_distance 0 (F4H): fixed take-profit — aboveTrailingDelta is omitted and the
+      TAKE_PROFIT leg fires at aboveStopPrice = entry * (1 + activation).
     """
     if entry_price <= 0:
         raise ValueError("entry_price must be > 0")
@@ -116,9 +127,9 @@ def map_trail_to_binance_oco(
         if above_type not in symbol_info.order_types or below_type not in symbol_info.order_types:
             allowed = False
             notes.append(f"required order types missing: need {above_type}+{below_type}")
-        # TAKE_PROFIT SELL uses "above" trailing filter band
-        mn = symbol_info.min_trailing_above_delta
-        mx = symbol_info.max_trailing_above_delta
+        # TAKE_PROFIT SELL uses "above" trailing filter band (not applicable to a fixed TP)
+        mn = None if strategy.fixed_take_profit else symbol_info.min_trailing_above_delta
+        mx = None if strategy.fixed_take_profit else symbol_info.max_trailing_above_delta
         if mn is not None and trail_bips < mn:
             allowed = False
             notes.append(
@@ -163,7 +174,8 @@ def map_trail_to_binance_oco(
 
     return BinanceTrailMapping(
         strategy_key=strategy.key,
-        mode="OCO_TAKE_PROFIT_TRAIL_PLUS_STOP_LOSS",
+        mode="OCO_FIXED_TAKE_PROFIT_PLUS_STOP_LOSS" if strategy.fixed_take_profit
+        else "OCO_TAKE_PROFIT_TRAIL_PLUS_STOP_LOSS",
         above_type=above_type,
         below_type=below_type,
         activation_price=float(activation_price),

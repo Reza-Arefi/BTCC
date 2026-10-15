@@ -24,6 +24,7 @@ CLOSE_REASON_LABELS = {
     "TAKE_PROFIT": "Take profit",
     "EMERGENCY_PROTECTION": "Emergency protection",
     "MANUAL_CLOSE": "Manual close",
+    "TIME_EXIT": "Time exit (max hold reached)",
     "RECONCILED_FLAT": "Reconciled flat",
     "UNKNOWN": "Unknown exit",
 }

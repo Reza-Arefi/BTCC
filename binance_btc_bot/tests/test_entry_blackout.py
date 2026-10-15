@@ -82,10 +82,10 @@ def test_blackout_does_not_reserve_slot():
     assert pm.slots_used() == 0
 
 
-def test_production_config_and_live3_overlay_carry_blackout():
+def test_production_config_and_live3_overlay_have_no_blackout():
     cfg = load_config()
-    bo = EntryBlackout.from_config(cfg["entry"]["blackout"])
-    assert bo is not None and bo.label() == LIVE3_BLACKOUT_LABEL == "FRI 12:00 -> MON 00:00 UTC"
+    assert EntryBlackout.from_config(cfg["entry"]["blackout"]) is None
+    assert LIVE3_BLACKOUT_LABEL == "OFF"
     tgt = build_live3_target_config(cfg)
-    assert tgt["live"]["strategy"] == "TRN4"
-    assert EntryBlackout.from_config(tgt["entry"]["blackout"]).label() == LIVE3_BLACKOUT_LABEL
+    assert tgt["live"]["strategy"] == "F4H"
+    assert EntryBlackout.from_config(tgt["entry"]["blackout"]) is None

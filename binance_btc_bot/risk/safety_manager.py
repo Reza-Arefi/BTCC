@@ -55,7 +55,8 @@ class SafetyManagerConfig:
     sl_halt_count: int = 2
     reset_counter_on_win: bool = True
     sl_cooldown_minutes: float = 0.0
-    # --- defensive mode trigger ---
+    # --- defensive mode trigger (False = never enter DEFENSIVE_MODE, e.g. wide-SL strategies) ---
+    defensive_enabled: bool = True
     defensive_min_open: int = 4
     defensive_loss_count: int = 3
     defensive_loss_pct: float = -0.020
@@ -339,7 +340,8 @@ class SafetyManager:
                 self._send("WARNING", "SAFETY_STOP_LOSS",
                            f"⚠️ SAFETY:\nTrade {symbol} stopped out.\nConsecutive SL count = {n}/{limit}.")
                 return "SL_COUNTED"
-            if reason in WIN_REASONS and self.config.reset_counter_on_win:
+            profitable_time_exit = reason == "TIME_EXIT" and pnl_pct is not None and float(pnl_pct) > 0
+            if (reason in WIN_REASONS or profitable_time_exit) and self.config.reset_counter_on_win:
                 if self.state.consecutive_stop_losses > 0 and not self.state.safety_halt:
                     old = self.state.consecutive_stop_losses
                     self.state.consecutive_stop_losses = 0
@@ -355,7 +357,7 @@ class SafetyManager:
     def evaluate_portfolio(self, positions: Iterable[PositionView]) -> bool:
         """Activate DEFENSIVE_MODE when the portfolio condition holds. Returns True if newly activated."""
         pos = list(positions)
-        if not self.config.enabled:
+        if not self.config.enabled or not self.config.defensive_enabled:
             return False
         losers = [p for p in pos if p.pnl_pct <= self.config.defensive_loss_pct + 1e-12]
         condition = len(pos) >= self.config.defensive_min_open and len(losers) >= self.config.defensive_loss_count
@@ -381,6 +383,8 @@ class SafetyManager:
         return True
 
     def would_trigger_defensive(self, positions: Iterable[PositionView]) -> bool:
+        if not self.config.defensive_enabled:
+            return False
         pos = list(positions)
         losers = [p for p in pos if p.pnl_pct <= self.config.defensive_loss_pct + 1e-12]
         return len(pos) >= self.config.defensive_min_open and len(losers) >= self.config.defensive_loss_count

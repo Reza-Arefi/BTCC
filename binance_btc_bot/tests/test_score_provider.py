@@ -280,7 +280,8 @@ class TestBuildProviderWiring(unittest.TestCase):
         ex = MagicMock()
         ex.get_klines.return_value = []
         prov = build_production_score_provider(cfg, exchange=ex, diagnostics=False)
-        self.assertIsNone(prov("ETHBTC", {}))
+        snap = prov.evaluate("ETHBTC", ignore_entry_window=True)
+        self.assertIsNone(snap.S_current)
         self.assertTrue(ex.get_klines.called)
         # Never touch credentials attributes in scoring path
         for call in ex.mock_calls:

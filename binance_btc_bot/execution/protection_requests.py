@@ -41,11 +41,12 @@ def build_t1_oco_request_params(
         "quantity": _fmt_decimal(req.quantity),
         "aboveType": req.above_type.upper(),
         "aboveStopPrice": _fmt_decimal(req.above_stop_price),
-        "aboveTrailingDelta": int(req.above_trailing_delta),
         "belowType": req.below_type.upper(),
         "belowStopPrice": _fmt_decimal(req.below_stop_price),
         "newOrderRespType": req.new_order_resp_type,
     }
+    if int(req.above_trailing_delta or 0) > 0:
+        params["aboveTrailingDelta"] = int(req.above_trailing_delta)
     if req.list_client_order_id:
         params["listClientOrderId"] = req.list_client_order_id
     return {

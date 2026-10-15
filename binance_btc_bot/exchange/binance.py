@@ -364,11 +364,12 @@ class BinanceExchange(ExchangeAdapter):
             "quantity": _fmt_decimal(request.quantity),
             "aboveType": request.above_type.upper(),
             "aboveStopPrice": _fmt_decimal(request.above_stop_price),
-            "aboveTrailingDelta": int(request.above_trailing_delta),
             "belowType": request.below_type.upper(),
             "belowStopPrice": _fmt_decimal(request.below_stop_price),
             "newOrderRespType": request.new_order_resp_type,
         }
+        if int(request.above_trailing_delta or 0) > 0:
+            params["aboveTrailingDelta"] = int(request.above_trailing_delta)
         if request.list_client_order_id:
             params["listClientOrderId"] = request.list_client_order_id
         if request.above_price is not None:

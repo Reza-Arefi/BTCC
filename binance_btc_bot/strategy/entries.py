@@ -7,13 +7,19 @@ Entry rule (live layer):
   Requires a prior observation of S < threshold on this symbol.
   Stay-in-zone does NOT open another trade.
   A cross inside the weekly entry blackout is consumed (not deferred).
+
+Cross source:
+  MEMORY  previous S = last score this process saw for the symbol (15m bots).
+  BAR     previous S = S of the previous closed bar, supplied by the score provider; each bar is
+          decided once (a cross skipped for slots / cooldown / blackout is consumed, as in backtests).
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from binance_btc_bot.portfolio.manager import PortfolioManager, ReserveResult
 from binance_btc_bot.strategy.entry_blackout import EntryBlackout
@@ -27,6 +33,9 @@ CLS_MAX_OPEN = "MAX_OPEN_TRADES"
 CLS_HALTED = "SAFETY_HALT"
 CLS_NEED_PRIOR_BELOW = "NEED_PRIOR_BELOW"
 CLS_ENTRY_BLACKOUT = "ENTRY_BLACKOUT"
+CLS_SAME_SYMBOL_COOLDOWN = "SAME_SYMBOL_COOLDOWN"
+CLS_BAR_ALREADY_DECIDED = "BAR_ALREADY_DECIDED"
+CROSS_SOURCES = frozenset({"MEMORY", "BAR"})
 
 
 @dataclass
@@ -123,8 +132,17 @@ class LiveEntryEngine:
         one_per_symbol: bool = True,
         portfolio: PortfolioManager | None = None,
         blackout: EntryBlackout | None = None,
+        cross_source: str = "MEMORY",
+        same_symbol_cooldown_sec: float = 0.0,
+        last_exit_lookup: Callable[[str], float | None] | None = None,
     ) -> None:
         self.blackout = blackout
+        self.cross_source = str(cross_source or "MEMORY").upper()
+        if self.cross_source not in CROSS_SOURCES:
+            raise ValueError(f"cross_source must be one of {sorted(CROSS_SOURCES)}")
+        self.same_symbol_cooldown_sec = float(same_symbol_cooldown_sec or 0.0)
+        self.last_exit_lookup = last_exit_lookup
+        self._decided_bar: dict[str, str] = {}
         self.long_threshold = float(long_threshold)
         self.upper_threshold = float(upper_threshold) if upper_threshold is not None else None
         self.strategy_key = str(strategy_key).upper()
@@ -147,6 +165,8 @@ class LiveEntryEngine:
         selector_key: str | None = None,
         reserve_slot: bool = False,
         now: datetime | None = None,
+        previous_score: float | None = None,
+        bar_ts: str | None = None,
     ) -> EntryDecision:
         sym = symbol.upper()
         strat = str(strategy_key or self.strategy_key).upper()
@@ -156,12 +176,15 @@ class LiveEntryEngine:
         if not safety_allows:
             return EntryDecision(False, sym, strat, sel, score, CLS_HALTED, CLS_HALTED, relative_price)
 
-        st = self._cross.setdefault(sym, CrossingState())
-        sm = st.update(
-            float(score),
-            long_threshold=self.long_threshold,
-            upper_threshold=self.upper_threshold,
-        )
+        if self.cross_source == "BAR":
+            sm = self._bar_cross(sym, float(score), previous_score, bar_ts)
+        else:
+            st = self._cross.setdefault(sym, CrossingState())
+            sm = st.update(
+                float(score),
+                long_threshold=self.long_threshold,
+                upper_threshold=self.upper_threshold,
+            )
         if not sm["trade_suggested"]:
             reason = str(sm["rejection_reason"])
             cls = {
@@ -172,6 +195,12 @@ class LiveEntryEngine:
             }.get(reason, reason)
             return EntryDecision(
                 False, sym, strat, sel, score, cls, reason, relative_price, crossed_into=False
+            )
+
+        if self._in_cooldown(sym, now):
+            return EntryDecision(
+                False, sym, strat, sel, score, CLS_SAME_SYMBOL_COOLDOWN, CLS_SAME_SYMBOL_COOLDOWN,
+                relative_price, crossed_into=True,
             )
 
         if self.blackout is not None and self.blackout.is_blocked(now):
@@ -221,3 +250,33 @@ class LiveEntryEngine:
         return EntryDecision(
             True, sym, strat, sel, score, CLS_ELIGIBLE, None, relative_price, crossed_into=True
         )
+
+    def _bar_cross(
+        self, sym: str, score: float, previous_score: float | None, bar_ts: str | None
+    ) -> dict[str, Any]:
+        def no(reason: str) -> dict[str, Any]:
+            return {"trade_suggested": False, "rejection_reason": reason, "score": score, "crossed_into": False}
+
+        if not bar_ts:
+            return no(CLS_NEED_PRIOR_BELOW)
+        if self._decided_bar.get(sym) == str(bar_ts):
+            return no(CLS_BAR_ALREADY_DECIDED)
+        self._decided_bar[sym] = str(bar_ts)
+        if score < self.long_threshold:
+            return no(CLS_BELOW_THRESHOLD)
+        if self.upper_threshold is not None and score >= self.upper_threshold:
+            return no(CLS_ABOVE_THRESHOLD)
+        if previous_score is None:
+            return no(CLS_NEED_PRIOR_BELOW)
+        if float(previous_score) >= self.long_threshold:
+            return no(CLS_SIGNAL_CONTINUATION)
+        return {"trade_suggested": True, "rejection_reason": None, "score": score, "crossed_into": True}
+
+    def _in_cooldown(self, sym: str, now: datetime | None) -> bool:
+        if self.same_symbol_cooldown_sec <= 0 or self.last_exit_lookup is None:
+            return False
+        last = self.last_exit_lookup(sym)
+        if last is None:
+            return False
+        now_s = now.timestamp() if now is not None else time.time()
+        return now_s - float(last) < self.same_symbol_cooldown_sec

@@ -259,6 +259,7 @@ class OrderLifecycle:
             "arm_sl_activation_trail": strategy.arm_sl_activation_trail,
             "activation": strategy.activation,
             "trail_distance": strategy.trail_distance,
+            "max_hold_hours": float(getattr(strategy, "max_hold_hours", 0.0) or 0.0),
             "requested_allocation_pct": size.requested_allocation_pct,
             "actual_allocation_pct": btc_value / equity_btc if equity_btc else None,
             "reservation_id": rid,
@@ -462,7 +463,10 @@ class OrderLifecycle:
                         * (1.0 - float(strategy.arm_sl_activation_trail))
                     ),
                     "activation_display": f"{strategy.activation * 100:.2f}%",
-                    "trail_display": f"{strategy.trail_distance * 100:.2f}%",
+                    "trail_display": (
+                        f"{strategy.trail_distance * 100:.2f}%" if strategy.trail_distance > 0
+                        else f"none (fixed TP, time exit {strategy.max_hold_hours / 24:g}d)"
+                    ),
                     "hard_sl_display": f"{strategy.arm_sl_activation_trail * 100:.2f}%",
                     "oco_id": list_id,
                     "oco_status": "ACCEPTED",

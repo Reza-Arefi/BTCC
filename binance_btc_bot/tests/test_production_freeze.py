@@ -26,17 +26,50 @@ from binance_btc_bot.storage.database import BotDatabase
 from binance_btc_bot.strategy.trails import get_strategy
 
 
-def test_production_freeze_rejects_missing_blackout(tmp_path: Path):
+def _write_variant(tmp_path: Path, mutate) -> Path:
     import yaml
 
     from binance_btc_bot.config_loader import DEFAULT_CONFIG_PATH
 
     raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
-    raw["entry"]["blackout"]["enabled"] = False
+    mutate(raw)
     p = tmp_path / "cfg.yaml"
     p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return p
+
+
+def test_production_freeze_rejects_weekend_blackout(tmp_path: Path):
+    def mutate(raw):
+        raw["entry"]["blackout"] = {"enabled": True, "timezone": "UTC", "start": "FRI 12:00", "end": "MON 00:00"}
+
     with pytest.raises(ValueError, match="entry.blackout"):
-        load_config(p)
+        load_config(_write_variant(tmp_path, mutate))
+
+
+@pytest.mark.parametrize(
+    "section,key,value,match",
+    [
+        ("signal", "interval", "15m", "signal.interval"),
+        ("signal", "factor_interval", "4h", "signal.factor_interval"),
+        ("signal", "bar_source", "klines", "signal.bar_source"),
+        ("entry", "cross_source", "MEMORY", "entry.cross_source"),
+        ("entry", "same_symbol_cooldown_minutes", 0, "same_symbol_cooldown_minutes"),
+    ],
+)
+def test_production_freeze_rejects_signal_drift(tmp_path: Path, section, key, value, match):
+    def mutate(raw):
+        raw[section][key] = value
+
+    with pytest.raises(ValueError, match=match):
+        load_config(_write_variant(tmp_path, mutate))
+
+
+def test_production_freeze_rejects_f4h_hold_change(tmp_path: Path):
+    def mutate(raw):
+        raw["strategies"]["F4H"]["max_hold_hours"] = 96
+
+    with pytest.raises(ValueError, match="max_hold_hours"):
+        load_config(_write_variant(tmp_path, mutate))
 
 
 def test_production_config_loads_and_matches_freeze():
@@ -47,13 +80,19 @@ def test_production_config_loads_and_matches_freeze():
     assert float(cfg["entry"]["long_threshold"]) == pytest.approx(PRODUCTION_THRESHOLD)
     assert cfg["entry"]["late_entry_enabled"] is False
     assert cfg["live"]["selector"] in (None, "null", "")
-    assert PRODUCTION_STRATEGY == "TRN4"
-    trn4 = cfg["strategies"]["TRN4"]
-    assert float(trn4["arm_sl_activation_trail"]) == pytest.approx(0.05)
-    assert float(trn4["activation"]) == pytest.approx(0.04)
-    assert float(trn4["trail_distance"]) == pytest.approx(0.005)
-    assert get_strategy("TRN4", cfg["strategies"]).trail_distance_bips == 50
-    assert cfg["_production_fingerprint"]["entry_blackout"] == "FRI 12:00 -> MON 00:00 UTC"
+    assert PRODUCTION_STRATEGY == "F4H"
+    f4h = get_strategy("F4H", cfg["strategies"])
+    assert f4h.arm_sl_activation_trail == pytest.approx(0.25)
+    assert f4h.activation == pytest.approx(0.30)
+    assert f4h.trail_distance_bips == 0 and f4h.fixed_take_profit
+    assert f4h.max_hold_hours == pytest.approx(120)
+    fp = cfg["_production_fingerprint"]
+    assert fp["entry_blackout"] == "OFF"
+    assert (fp["signal_interval"], fp["factor_interval"], fp["bar_source"]) == ("4h", "15m", "1m_ratio")
+    assert fp["lookback_bars"] == 400
+    assert fp["cross_source"] == "BAR" and fp["same_symbol_cooldown_minutes"] == 120
+    assert cfg["safety_manager"]["defensive_enabled"] is False
+    assert float(cfg["risk"]["max_loss_per_trade"]) == pytest.approx(PRODUCTION_ALLOC * 0.25)
     assert int(cfg["portfolio"]["max_simultaneous_trades"]) == PRODUCTION_MAX_TRADES
     assert float(cfg["portfolio"]["allocation_per_trade"]) == pytest.approx(PRODUCTION_ALLOC)
     assert (cfg.get("production") or {}).get("config_version") == PRODUCTION_CONFIG_VERSION

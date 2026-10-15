@@ -12,29 +12,38 @@
 authoritative_runtime_config: binance_btc_bot/config/binance_bot.yaml
 
 production:
-  config_version: "TRN4_E2_S65_N4_WKND_v1"
-  strategy: TRN4
+  config_version: "F4H_X16_S65_N6_v1"
+  previous_version: "TRN4_E2_S65_N4_WKND_v1"
+  strategy: F4H
   entry_profile: e2
   threshold: 0.65
-  entry_rule: NEW_CROSS
+  entry_rule: NEW_CROSS          # S_prev < 0.65 <= S on consecutive CLOSED 4h bars, decided once per bar
   late_entry: false
   selector: null
-  trn4:
-    stop_loss: 0.05        # 5%
-    activation: 0.04       # 4%
-    trail_distance: 0.005  # 0.5% (trailingDelta 50 BIPS)
-  entry_blackout:
-    timezone: UTC
-    start: "FRI 12:00"
-    end: "MON 00:00"       # no NEW entries; open positions keep their OCO
+  signal:
+    bar_interval: 4h             # ALT/BTC bars built from 1m ratio closes, UTC 00/04/08/12/16/20
+    bar_source: 1m_ratio
+    factor_interval: 15m         # factor lookbacks in 15m units applied to 4h bars (x16 time scale)
+    lookback_bars: 400
+    entry_window_min: 30         # only act within 30 min after each 4h close
+  f4h:
+    stop_loss: 0.25              # 25%
+    take_profit: 0.30            # 30% fixed (OCO TAKE_PROFIT, no trailingDelta)
+    max_hold_hours: 120          # 5 days, then cancel OCO + market sell (TIME_EXIT)
+  same_symbol_cooldown_minutes: 120
+  entry_blackout: null           # no weekend block
+  safety_manager:
+    defensive_mode: false        # -2%/-3% defensive rules are incompatible with a 25% stop
+    consecutive_sl_halt: 2
   portfolio:
-    max_simultaneous_trades: 4
-    allocation_per_trade: 0.25
+    max_simultaneous_trades: 6
+    allocation_per_trade: 0.1666
   live_trading_enabled_default: false
   dry_run_default: true
   note: >
     MEXC H23 bot is a separate BTC_USD COIN-M product and is NOT this strategy.
-    ALT/BTC E2 S>=0.65 + TRN4 N=4 + weekend entry block runs on Binance spot (this config).
+    ALT/BTC E2 S>=0.65 on closed 4h bars + F4H SL25/TP30/5d, N=6 x 1/6, runs on
+    Binance spot (this config).
 
 safety:
   require_env_LIVE_TRADING_ENABLED: true
@@ -45,11 +54,15 @@ safety:
     Default construction never submits orders.
 
 validated_fingerprint:
-  window: "2026-09-13 → 2026-10-12 (149 live entries, W2 + T30 cohorts)"
-  source: binance_btc_bot/tools/run_weekend_window_grid_20261012.py  # → results/weekend_window_grid_2026-10-12/ (local)
-  selection: "TRN4 SL5 + FRI 12:00→MON 00:00 UTC entry block, Nmax=4 equal 25%"
-  growth_pct_after_fees: 26.2
-  max_dd_pct: -4.3
-  profit_factor: 2.32
-  trades: 49
-  caveat: "In-sample selection on ~1 month of live entries; live slippage ~0.2pp/trade not included."
+  window: "2023-10 → 2026-09 (36 months, 38 ALT/BTC pairs, 1m-built 4h bars)"
+  source: htf_4h/step8_3y.py   # → results/htf_4h/step8_3y/ (local)
+  selection: "x16 4h score, NEW_CROSS S>=0.65, SL 25% / TP 30% / 5d hold, 6 x 1/6, 2h same-coin block"
+  growth_pct_after_fees: 749.6
+  max_dd_pct: -30.9
+  growth_pct_with_live_gap: 521.4   # extra 0.22% per trade execution cost
+  max_dd_pct_with_live_gap: -34.9
+  profit_factor: 1.45
+  trades: 867
+  win_rate: 0.466
+  positive_months: "23/36"
+  caveat: "Tuned on the last 7 months; the 17 months never used in tuning returned +108% (DD -28.9%). Expect long flat/underwater stretches (longest 331 days)."

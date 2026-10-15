@@ -210,7 +210,7 @@ class TestLive3PreflightNoOrders(unittest.TestCase):
                     bsp.return_value = type(
                         "SP",
                         (),
-                        {"evaluate": lambda self, s: type("Snap", (), {"S_current": 0.5, "reason": "OK"})()},
+                        {"evaluate": lambda self, s, **kw: type("Snap", (), {"S_current": 0.5, "reason": "OK"})()},
                     )()
                     report = live3_mod.run_live3_preflight(seed_runtime=True)
 

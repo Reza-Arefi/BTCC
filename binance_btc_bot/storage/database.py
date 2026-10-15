@@ -198,6 +198,27 @@ class BotDatabase:
         row = cur.fetchone()
         return dict(row) if row else None
 
+    def last_exit_epoch(self, symbol: str) -> float | None:
+        """Epoch seconds of the most recent close on ``symbol`` (exit_time, else row update time)."""
+        cur = self._conn.execute(
+            "SELECT exit_time, updated_at FROM trades WHERE symbol=? AND status='CLOSED' "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (symbol.upper(),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        exit_time, updated_at = row[0], row[1]
+        if exit_time:
+            try:
+                from datetime import datetime, timezone
+
+                dt = datetime.fromisoformat(str(exit_time).replace("Z", "+00:00"))
+                return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp()
+            except ValueError:
+                pass
+        return float(updated_at) if updated_at is not None else None
+
     def update_order_status(
         self,
         *,

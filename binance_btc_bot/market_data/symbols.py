@@ -52,7 +52,9 @@ def validate_universe(
             if need not in info.order_types:
                 reasons.append(f"missing_order_type:{need}")
         trail_bips = strategy.trail_distance_bips
-        if info.min_trailing_above_delta is not None and trail_bips < info.min_trailing_above_delta:
+        if trail_bips == 0:
+            pass
+        elif info.min_trailing_above_delta is not None and trail_bips < info.min_trailing_above_delta:
             reasons.append(
                 f"{strategy.key}_trail_{trail_bips}_bips_below_min_{info.min_trailing_above_delta}"
             )

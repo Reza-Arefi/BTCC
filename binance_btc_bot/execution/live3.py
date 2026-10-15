@@ -2,15 +2,15 @@
 
 HARD RULES
 ----------
-* Default on-disk YAML stays LIVE=false / DRY_RUN=true / max=2.
-* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, TRN4, NONE, max=4,
-  allocation 25%, total cap 100% (4 × 25%), E2 S>=0.65 NEW_CROSS,
-  no new entries FRI 12:00 → MON 00:00 UTC.
+* Default on-disk YAML stays LIVE=false / DRY_RUN=true.
+* LIVE-3 target overlay: LIVE=true, DRY_RUN=false, F4H, NONE, max=6,
+  allocation 16.66%, total cap 100%, E2 S>=0.65 NEW_CROSS, no entry blackout.
 * Preflight never places real orders and never auto-arms.
 * Arm only via --live3-arm --authorize-live after LIVE_3_PREFLIGHT=PASS
   with BINANCE_LIVE3_AUTHORIZED=true.
-* Entry: E2 signed S, NEW CROSS into S >= 0.65 on closed 15m bar.
-* Live TRN4 is fixed OCO: SL 5%, activation 4%, trail 0.5% (50 BIPS).
+* Entry: E2 signed S on 4h ALT/BTC bars built from 1m legs (15m factor lookbacks = x16 in time),
+  NEW CROSS into S >= 0.65 on a closed 4h bar (previous bar < 0.65), 2h same-symbol cooldown.
+* Live F4H is a fixed OCO: SL 25%, TAKE_PROFIT +30% (no trailingDelta), market close after 5 days.
 """
 
 from __future__ import annotations
@@ -26,10 +26,15 @@ from pathlib import Path
 from typing import Any
 
 from binance_btc_bot.config_loader import (
+    FROZEN_MAX_HOLD_HOURS,
     FROZEN_STRATEGIES,
-    PRODUCTION_BLACKOUT_END,
-    PRODUCTION_BLACKOUT_START,
+    PRODUCTION_ALLOC,
     PRODUCTION_CONFIG_VERSION,
+    PRODUCTION_COOLDOWN_MIN,
+    PRODUCTION_CROSS_SOURCE,
+    PRODUCTION_MAX_LOSS,
+    PRODUCTION_MAX_TRADES,
+    PRODUCTION_SIGNAL,
     PRODUCTION_STRATEGY,
     load_config,
 )
@@ -49,21 +54,16 @@ from binance_btc_bot.strategy.trails import get_strategy
 
 logger = logging.getLogger(__name__)
 
-LIVE3_MAX = 4
-LIVE3_ALLOC = 0.25
-LIVE3_TOTAL_CAP = 1.0  # 4 × 25%
+LIVE3_MAX = PRODUCTION_MAX_TRADES
+LIVE3_ALLOC = PRODUCTION_ALLOC
+LIVE3_TOTAL_CAP = 1.0  # 6 × 16.66% = 99.96% fits under 100%
 LIVE3_THRESHOLD = 0.65
-LIVE3_RISK = 0.0125  # 25% × 5% TRN4 SL
-LIVE3_PREVIOUS_MAX = 2  # prior W2_I2_T03_N2 cap (for one-shot CONFIG UPDATED notify)
+LIVE3_RISK = PRODUCTION_MAX_LOSS  # 16.66% × 25% F4H SL
+LIVE3_PREVIOUS_MAX = 4  # prior TRN4 cap (for one-shot CONFIG UPDATED notify)
 LIVE3_STRATEGY = PRODUCTION_STRATEGY
 LIVE3_STRATEGY_GEOM = FROZEN_STRATEGIES[LIVE3_STRATEGY]
-LIVE3_BLACKOUT = {
-    "enabled": True,
-    "timezone": "UTC",
-    "start": PRODUCTION_BLACKOUT_START,
-    "end": PRODUCTION_BLACKOUT_END,
-}
-LIVE3_BLACKOUT_LABEL = EntryBlackout.from_config(LIVE3_BLACKOUT).label()
+LIVE3_BLACKOUT = {"enabled": False}
+LIVE3_BLACKOUT_LABEL = "OFF"
 
 
 def build_live3_target_config(base: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -97,9 +97,12 @@ def build_live3_target_config(base: dict[str, Any] | None = None) -> dict[str, A
     entry["late_entry_enabled"] = False
     entry["rule"] = "NEW_CROSS"
     entry["blackout"] = dict(LIVE3_BLACKOUT)
+    entry["cross_source"] = PRODUCTION_CROSS_SOURCE
+    entry["same_symbol_cooldown_minutes"] = PRODUCTION_COOLDOWN_MIN
     cfg["entry"] = entry
     signal = dict(cfg.get("signal") or {})
     signal["momentum_profile"] = "e2"
+    signal.update(PRODUCTION_SIGNAL)
     cfg["signal"] = signal
     prod = dict(cfg.get("production") or {})
     prod["config_version"] = PRODUCTION_CONFIG_VERSION
@@ -328,9 +331,11 @@ def run_live3_preflight(
             abs(strat.activation - act) < 1e-12
             and abs(strat.trail_distance - dist) < 1e-12
             and abs(strat.arm_sl_activation_trail - sl) < 1e-12
+            and abs(strat.max_hold_hours - float(FROZEN_MAX_HOLD_HOURS.get(LIVE3_STRATEGY, 0.0))) < 1e-12
         )
         strat_detail = (
-            f"act={strat.activation} trail={strat.trail_distance} sl={strat.arm_sl_activation_trail}"
+            f"act={strat.activation} trail={strat.trail_distance} sl={strat.arm_sl_activation_trail} "
+            f"max_hold_h={strat.max_hold_hours}"
         )
         strat_ok = strat_ok and geom_ok
     except Exception as e:  # noqa: BLE001
@@ -369,7 +374,7 @@ def run_live3_preflight(
     )
     out.add(
         6,
-        f"allocation_per_trade={LIVE3_ALLOC*100:.0f}%",
+        f"allocation_per_trade={LIVE3_ALLOC*100:.2f}%",
         "PASS" if abs(float(port.get("allocation_per_trade") or 0) - LIVE3_ALLOC) < 1e-12 else "FAIL",
     )
     thr_ok = abs(float(entry.get("long_threshold") or 0) - LIVE3_THRESHOLD) < 1e-12
@@ -379,11 +384,18 @@ def run_live3_preflight(
     except ValueError as e:
         bo_label = f"INVALID ({e})"
     bo_ok = bo_label == LIVE3_BLACKOUT_LABEL
+    sig = target.get("signal") or {}
+    sig_ok = all(str(sig.get(k)).lower() == str(v).lower() for k, v in PRODUCTION_SIGNAL.items())
+    cross_ok = str(entry.get("cross_source") or "").upper() == PRODUCTION_CROSS_SOURCE
+    cool_ok = int(entry.get("same_symbol_cooldown_minutes") or 0) == PRODUCTION_COOLDOWN_MIN
     out.add(
         7,
-        f"threshold={LIVE3_THRESHOLD} + entry blackout {LIVE3_BLACKOUT_LABEL}",
-        "PASS" if (thr_ok and bo_ok) else "FAIL",
-        f"threshold={entry.get('long_threshold')} blackout={bo_label}",
+        f"threshold={LIVE3_THRESHOLD} 4h bar cross, blackout {LIVE3_BLACKOUT_LABEL}, "
+        f"cooldown {PRODUCTION_COOLDOWN_MIN}m",
+        "PASS" if (thr_ok and bo_ok and sig_ok and cross_ok and cool_ok) else "FAIL",
+        f"threshold={entry.get('long_threshold')} blackout={bo_label} "
+        f"bars={sig.get('interval')}/{sig.get('bar_source')} factor={sig.get('factor_interval')} "
+        f"cross={entry.get('cross_source')} cooldown={entry.get('same_symbol_cooldown_minutes')}",
     )
     out.add(
         8,
@@ -640,7 +652,7 @@ def run_live3_preflight(
             from binance_btc_bot.strategy.score_provider import build_production_score_provider
 
             sp = build_production_score_provider(probe, exchange=engine.exchange, diagnostics=False)
-            snap = sp.evaluate("ETHBTC")
+            snap = sp.evaluate("ETHBTC", ignore_entry_window=True)
             s_curr = getattr(snap, "S_current", None)
             reason = getattr(snap, "reason", "") or ""
             healthy = s_curr is not None and math.isfinite(float(s_curr))
@@ -1107,6 +1119,13 @@ class Live3Session:
                     if sm is not None:
                         sm.mark_monitor_failed(f"safety cycle error: {scrub_exception(e)}")
 
+            if hasattr(engine, "time_exit_cycle"):
+                try:
+                    for res in engine.time_exit_cycle():
+                        out.events.append(f"TIME_EXIT:{res.get('symbol')}:{res.get('result')}")
+                except Exception as e:  # noqa: BLE001
+                    logger.error("time exit cycle failed: %s", scrub_exception(e))
+
             if not engine.safety.allow_new_entries():
                 now = time.time()
                 if now - last_reconcile >= self.reconcile_every_sec:
@@ -1169,7 +1188,14 @@ class Live3Session:
                 if score is None:
                     continue
                 score_f = float(score)
-                prev = last_score.get(sym)
+                bar_mode = getattr(engine.entry_engine, "cross_source", "MEMORY") == "BAR"
+                bar_ts = None
+                if bar_mode:
+                    snap_b = score_provider.last_snapshot(sym)
+                    prev = snap_b.S_previous if snap_b is not None else None
+                    bar_ts = snap_b.decision_candle_ts if snap_b is not None else None
+                else:
+                    prev = last_score.get(sym)
                 decision = engine.entry_engine.evaluate(
                     symbol=sym,
                     score=score_f,
@@ -1180,6 +1206,8 @@ class Live3Session:
                     strategy_key=engine.strategy_provider.strategy_key(),
                     selector_key=engine.strategy_provider.selector_key(),
                     reserve_slot=True,
+                    previous_score=prev if bar_mode else None,
+                    bar_ts=bar_ts,
                 )
                 last_score[sym] = score_f
                 if not decision.trade_suggested:

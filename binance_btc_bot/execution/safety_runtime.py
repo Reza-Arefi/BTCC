@@ -170,7 +170,10 @@ class SafetyRuntime:
         cfg = _trade_cfg(trade)
         entry = float(trade["entry_price"])
         act = float(cfg.get("activation") or trade.get("configured_activation") or 0.04)
-        trail = float(cfg.get("trail_distance") or trade.get("configured_trailing_distance") or 0.02)
+        trail_raw = cfg.get("trail_distance")
+        if trail_raw is None:
+            trail_raw = trade.get("configured_trailing_distance")
+        trail = float(0.02 if trail_raw is None else trail_raw)
         above = _ceil_tick(max(entry * (1.0 + act), price * 1.002), info.price_tick)
         n = int(time.time()) % 100000
         req = TrailingOcoRequest(

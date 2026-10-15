@@ -103,6 +103,12 @@ class ProductionScoreProvider:
     max_closed_candle_age_sec: float = DEFAULT_MAX_CLOSED_AGE_SEC
     diagnostics: bool = False
     now_fn: Callable[[], datetime] = field(default=lambda: datetime.now(timezone.utc))
+    # Horizon scaling for the factors. None = same as ``interval``. "15m" on 4h bars = every
+    # lookback stretched x16 in time (HTF4H research "scaled" variant).
+    factor_interval: str | None = None
+    # When set, ALT/BTC bars come from 1m-built 4h bars (htf_bars.Rel4hBarStore) and S_previous is
+    # computed on an equal-length window ending one bar earlier.
+    bar_store: Any = None
 
     def __post_init__(self) -> None:
         self.weights = static_factor_weights(self.signal_cfg)
@@ -110,6 +116,11 @@ class ProductionScoreProvider:
         self._last: dict[str, ScoreSnapshot] = {}
         # Full factor dump from the latest successful evaluate() per symbol.
         self._last_entry_snapshot: dict[str, dict[str, Any]] = {}
+        self._bar_cache: dict[str, tuple[str, dict[str, Any] | None, float | None]] = {}
+
+    @property
+    def scoring_interval(self) -> str:
+        return str(self.factor_interval or self.interval)
 
     # ------------------------------------------------------------------ API
     def __call__(self, symbol: str, rel: Mapping[str, Any] | None = None) -> float | None:
@@ -128,12 +139,17 @@ class ProductionScoreProvider:
         *,
         rel: Mapping[str, Any] | None = None,
         now: datetime | None = None,
+        ignore_entry_window: bool = False,
     ) -> ScoreSnapshot:
         sym = symbol.upper()
         now_utc = now or self.now_fn()
         if now_utc.tzinfo is None:
             now_utc = now_utc.replace(tzinfo=timezone.utc)
         ts_iso = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        if self.bar_store is not None:
+            return self._evaluate_bars(sym, rel=rel, now_utc=now_utc, ts_iso=ts_iso,
+                                       ignore_entry_window=ignore_entry_window)
 
         try:
             frames = self._load_frames(sym, now=now_utc)
@@ -271,6 +287,105 @@ class ProductionScoreProvider:
             history_bars=len(rel_df),
         )
         return self._finish(snap)
+
+    def _evaluate_bars(
+        self,
+        sym: str,
+        *,
+        rel: Mapping[str, Any] | None,
+        now_utc: datetime,
+        ts_iso: str,
+        ignore_entry_window: bool = False,
+    ) -> ScoreSnapshot:
+        from binance_btc_bot.strategy.htf_bars import BAR_MS, BarNotReady, last_closed_open_ms
+
+        def done(reason: str | None, *, price: float | None = None, prev: float | None = None,
+                 curr: float | None = None, cross: bool = False, decision: str | None = None,
+                 history: int = 0) -> ScoreSnapshot:
+            return self._finish(ScoreSnapshot(
+                timestamp=ts_iso, symbol=sym, relative_price=price if price is not None else _rel_price(rel),
+                S_previous=prev, S_current=curr, cross_detected=cross, decision_candle_ts=decision,
+                reason=reason, interval=self.interval, long_threshold=self.long_threshold, history_bars=history,
+            ))
+
+        now_ms = int(now_utc.timestamp() * 1000)
+        last_open = last_closed_open_ms(now_ms)
+        age = (now_ms - (last_open + BAR_MS)) / 1000.0
+        if not ignore_entry_window and age > float(self.max_closed_candle_age_sec):
+            return done(f"OUTSIDE_ENTRY_WINDOW:age_sec={age:.0f}")
+        try:
+            frames = self._load_bar_frames(sym, last_open, now=now_utc)
+        except BarNotReady as e:
+            return done(f"BAR_NOT_READY:{e}")
+        except Exception as e:  # noqa: BLE001
+            return done(f"MARKET_DATA_ERROR:{type(e).__name__}")
+        if frames is None:
+            return done("MISSING_MARKET_DATA")
+        rel_df, alt_df, btc_df = frames
+        n = int(self.lookback_bars)
+        decision = str(rel_df["timestamp"].iloc[-1]) if len(rel_df) else None
+        price = float(rel_df["close"].iloc[-1]) if len(rel_df) else None
+        if not len(rel_df) or int(pd.Timestamp(rel_df["timestamp"].iloc[-1]).value // 1_000_000) != last_open:
+            return done("STALE_MARKET_DATA:newest_bar_missing", price=price, decision=decision, history=len(rel_df))
+        if len(rel_df) < max(int(self.min_history_bars), n):
+            return done(f"INSUFFICIENT_HISTORY:bars={len(rel_df)}", price=price, decision=decision,
+                        history=len(rel_df))
+
+        cached = self._bar_cache.get(sym)
+        if cached is not None and cached[0] == decision:
+            detail_curr, s_prev = cached[1], cached[2]
+        else:
+            detail_curr = detail_from_frames(
+                rel_df.iloc[-n:], alt_df.iloc[-n:], btc_df.iloc[-n:], self.signal_cfg,
+                interval=self.scoring_interval, weights=self.weights,
+            )
+            s_prev = None
+            contiguous = len(rel_df) >= n + 1 and (
+                rel_df["timestamp"].iloc[-1] - rel_df["timestamp"].iloc[-2] == pd.Timedelta(milliseconds=BAR_MS)
+            )
+            if contiguous:
+                s_prev = score_from_frames(
+                    rel_df.iloc[-n - 1:-1], alt_df.iloc[-n - 1:-1], btc_df.iloc[-n - 1:-1], self.signal_cfg,
+                    interval=self.scoring_interval, weights=self.weights,
+                )
+            self._bar_cache[sym] = (decision, detail_curr, s_prev)
+
+        s_curr = None if detail_curr is None else detail_curr.get("S")
+        if s_curr is None:
+            self._last_entry_snapshot.pop(sym, None)
+            return done("INVALID_SCORE", price=price, prev=s_prev, decision=decision, history=len(rel_df))
+        cross = new_cross_into(s_prev, float(s_curr), self.long_threshold)
+        entry_snap = dict(detail_curr or {})
+        entry_snap.update({
+            "timestamp": ts_iso, "symbol": sym, "S_previous": s_prev, "S_current": float(s_curr),
+            "cross_detected": bool(cross), "long_threshold": float(self.long_threshold),
+            "decision_candle_ts": decision, "relative_price": price, "history_bars": len(rel_df),
+            "interval": self.interval, "factor_interval": self.scoring_interval, "bar_source": "1m_ratio_4h",
+            "momentum_profile": str((self.signal_cfg.get("factors") or {}).get("momentum_profile") or "base"),
+        })
+        self._last_entry_snapshot[sym] = json_safe(entry_snap)
+        return done(None, price=price, prev=s_prev, curr=float(s_curr), cross=cross, decision=decision,
+                    history=len(rel_df))
+
+    def _load_bar_frames(
+        self, btc_pair: str, last_open_ms: int, *, now: datetime
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | None:
+        base = base_from_btc_pair(btc_pair)
+        rel = self.bar_store.bars(base, last_open_ms)
+        if rel is None or rel.empty:
+            return None
+        limit = int(self.lookback_bars) + 6
+        btc_df = self._fetch_closed("BTCUSDT", limit=limit, now=now)
+        alt_df = self._fetch_closed(usdt_pair_for_base(base), limit=limit, now=now)
+        if btc_df is None or alt_df is None or btc_df.empty or alt_df.empty:
+            return None
+        idx = pd.DatetimeIndex(pd.to_datetime(rel["timestamp"], utc=True))
+
+        def align(df: pd.DataFrame) -> pd.DataFrame:
+            d = df.assign(timestamp=pd.to_datetime(df["timestamp"], utc=True)).set_index("timestamp")
+            return d.reindex(idx).ffill().rename_axis("timestamp").reset_index()
+
+        return rel.reset_index(drop=True), align(alt_df), align(btc_df)
 
     def last_snapshot(self, symbol: str) -> ScoreSnapshot | None:
         return self._last.get(symbol.upper())
@@ -591,18 +706,42 @@ def build_production_score_provider(
     def _fetch(symbol: str, interval: str, limit: int) -> list:
         return list(exchange.get_klines(symbol, interval=interval, limit=limit))
 
+    interval = str(signal.get("interval") or DEFAULT_INTERVAL)
+    lookback = int(signal.get("lookback_bars") or DEFAULT_LOOKBACK)
+    bar_store = None
+    if str(signal.get("bar_source") or "").lower() == "1m_ratio":
+        from binance_btc_bot.strategy.htf_bars import Rel4hBarStore
+
+        if interval != "4h":
+            raise ValueError("signal.bar_source=1m_ratio requires signal.interval=4h")
+
+        def _fetch_1m(symbol: str, start_ms: int, end_ms: int) -> list:
+            return list(exchange.get_klines(symbol, interval="1m", limit=1000,
+                                            start_time_ms=start_ms, end_time_ms=end_ms))
+
+        bar_store = Rel4hBarStore(_fetch_1m, bars=lookback + 1, cache_dir=bar_cache_dir(cfg))
+
     return ProductionScoreProvider(
         signal_cfg=signal_cfg,
         kline_fetcher=_fetch,
-        interval=str(signal.get("interval") or DEFAULT_INTERVAL),
-        lookback_bars=int(signal.get("lookback_bars") or DEFAULT_LOOKBACK),
+        interval=interval,
+        lookback_bars=lookback,
         min_history_bars=int(signal.get("min_history_bars") or MIN_HISTORY_BARS),
         long_threshold=thr,
         max_closed_candle_age_sec=float(
             signal.get("max_closed_candle_age_sec") or DEFAULT_MAX_CLOSED_AGE_SEC
         ),
         diagnostics=diag,
+        factor_interval=signal.get("factor_interval") or None,
+        bar_store=bar_store,
     )
+
+
+def bar_cache_dir(cfg: dict[str, Any]) -> Path:
+    db_path = Path(str((cfg.get("storage") or {}).get("sqlite_path") or "data/binance_btc_bot/bot.sqlite3"))
+    if not db_path.is_absolute():
+        db_path = REPO_ROOT / db_path
+    return db_path.parent / "rel4h_1m"
 
 
 def _rel_price(rel: Mapping[str, Any] | None) -> float | None:

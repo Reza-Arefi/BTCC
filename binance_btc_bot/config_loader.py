@@ -9,26 +9,34 @@ from typing import Any
 
 import yaml
 
-from binance_btc_bot.strategy.entry_blackout import EntryBlackout, format_week_time, parse_week_time
+from binance_btc_bot.strategy.entry_blackout import EntryBlackout
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PACKAGE_ROOT.parent
 DEFAULT_CONFIG_PATH = PACKAGE_ROOT / "config" / "binance_bot.yaml"
 PRODUCTION_POINTER_PATH = REPO_ROOT / "configs" / "live_production.yaml"
 
-# Frozen production identity — live-trade replay 2026-10-12 (W2 + T30 cohorts):
-#   E2 signed S NEW_CROSS >= 0.65, TRN4 exits, Nmax=4, equal 25% allocation,
-#   no new entries FRI 12:00 → MON 00:00 UTC.
-PRODUCTION_CONFIG_VERSION = "TRN4_E2_S65_N4_WKND_v1"
-PRODUCTION_STRATEGY = "TRN4"
+# Frozen production identity — HTF4H research (htf_4h/, 3-year backtest 2023-10 → 2026-09):
+#   E2 signed S on 4h ALT/BTC bars built from 1m legs, factor lookbacks of the 15m score (x16 in time),
+#   NEW_CROSS >= 0.65 on a closed 4h bar (previous bar < 0.65), F4H exits (SL 25% / TP 30% / 5-day
+#   time exit), Nmax=6 at 1/6 of equity, 2h same-symbol cooldown, no weekend entry blackout.
+PRODUCTION_CONFIG_VERSION = "F4H_X16_S65_N6_v1"
+PRODUCTION_STRATEGY = "F4H"
 PRODUCTION_ENTRY_PROFILE = "e2"
 PRODUCTION_THRESHOLD = 0.65
 PRODUCTION_LATE_ENTRY = False
-PRODUCTION_MAX_TRADES = 4
-PRODUCTION_ALLOC = 0.25
-PRODUCTION_MAX_LOSS = 0.0125  # 25% allocation × 5% TRN4 SL
-PRODUCTION_BLACKOUT_START = "FRI 12:00"
-PRODUCTION_BLACKOUT_END = "MON 00:00"
+PRODUCTION_MAX_TRADES = 6
+PRODUCTION_ALLOC = 0.1666
+PRODUCTION_MAX_LOSS = 0.04165  # 16.66% allocation × 25% F4H SL
+PRODUCTION_CROSS_SOURCE = "BAR"
+PRODUCTION_COOLDOWN_MIN = 120
+PRODUCTION_SIGNAL = {
+    "interval": "4h",
+    "factor_interval": "15m",
+    "bar_source": "1m_ratio",
+    "lookback_bars": 400,
+    "min_history_bars": 400,
+}
 
 FROZEN_STRATEGIES = {
     "T1": (0.0075, 0.0075, 0.0025),
@@ -51,7 +59,10 @@ FROZEN_STRATEGIES = {
     "W2": (0.05, 0.04, 0.02),
     # TRN4 = SL 5% / act 4% / trail 0.5% (trailingDelta 50 BIPS).
     "TRN4": (0.05, 0.04, 0.005),
+    # F4H = HTF4H winner: SL 25% / fixed TP 30% (trail 0 = no trailingDelta) + 5-day time exit.
+    "F4H": (0.25, 0.30, 0.0),
 }
+FROZEN_MAX_HOLD_HOURS = {"F4H": 120.0}
 
 EXPECTED_BTC_PAIRS = (
     "AAVEBTC",
@@ -96,9 +107,7 @@ EXPECTED_BTC_PAIRS = (
 
 
 def _production_blackout_label() -> str:
-    start = format_week_time(parse_week_time(PRODUCTION_BLACKOUT_START))
-    end = format_week_time(parse_week_time(PRODUCTION_BLACKOUT_END))
-    return f"{start} -> {end} UTC"
+    return "OFF"
 
 
 def env_live_trading_enabled() -> bool:
@@ -147,7 +156,9 @@ def _validate_config(cfg: dict[str, Any]) -> None:
     risk = cfg.get("risk") or {}
     max_loss = float(risk.get("max_loss_per_trade", PRODUCTION_MAX_LOSS))
     if abs(max_loss - PRODUCTION_MAX_LOSS) > 1e-12:
-        raise ValueError(f"risk.max_loss_per_trade must be {PRODUCTION_MAX_LOSS} for 25%×5% SL")
+        raise ValueError(
+            f"risk.max_loss_per_trade must be {PRODUCTION_MAX_LOSS} ({PRODUCTION_ALLOC} allocation × F4H 25% SL)"
+        )
     risk = dict(risk)
     risk["max_allocation_pct"] = portfolio.allocation_per_trade
     risk["max_aggregate_exposure"] = portfolio.max_total_allocation
@@ -181,9 +192,17 @@ def _validate_config(cfg: dict[str, Any]) -> None:
     if ver == PRODUCTION_CONFIG_VERSION or prod.get("validated_strategy"):
         if str(live.get("strategy") or "").upper() != PRODUCTION_STRATEGY:
             raise ValueError(f"live.strategy must be {PRODUCTION_STRATEGY} for production freeze")
-        if blackout is None or blackout.label() != _production_blackout_label():
+        if blackout is not None:
+            raise ValueError("entry.blackout must be disabled for production freeze (no weekend block)")
+        for key, want in PRODUCTION_SIGNAL.items():
+            got = signal.get(key)
+            if str(got).lower() != str(want).lower():
+                raise ValueError(f"signal.{key} must be {want!r} for production freeze (got {got!r})")
+        if str(entry.get("cross_source") or "").upper() != PRODUCTION_CROSS_SOURCE:
+            raise ValueError(f"entry.cross_source must be {PRODUCTION_CROSS_SOURCE} for production freeze")
+        if int(entry.get("same_symbol_cooldown_minutes") or 0) != PRODUCTION_COOLDOWN_MIN:
             raise ValueError(
-                f"entry.blackout must be enabled {_production_blackout_label()} for production freeze"
+                f"entry.same_symbol_cooldown_minutes must be {PRODUCTION_COOLDOWN_MIN} for production freeze"
             )
 
     strategies = cfg.get("strategies") or {}
@@ -197,6 +216,9 @@ def _validate_config(cfg: dict[str, Any]) -> None:
             raise ValueError(f"{key} activation must stay {act}")
         if abs(float(raw["trail_distance"]) - dist) > 1e-12:
             raise ValueError(f"{key} trail_distance must stay {dist}")
+        hold = float(FROZEN_MAX_HOLD_HOURS.get(key, 0.0))
+        if abs(float(raw.get("max_hold_hours") or 0.0) - hold) > 1e-12:
+            raise ValueError(f"{key} max_hold_hours must stay {hold}")
 
     pairs = [str(x).upper() for x in (cfg.get("universe") or {}).get("btc_pairs") or []]
     if tuple(pairs) != EXPECTED_BTC_PAIRS:
@@ -231,6 +253,13 @@ def production_fingerprint(cfg: dict[str, Any]) -> dict[str, Any]:
         "exit_sl": float(exit_geom.get("arm_sl_activation_trail") or 0),
         "exit_activation": float(exit_geom.get("activation") or 0),
         "exit_trail": float(exit_geom.get("trail_distance") or 0),
+        "exit_max_hold_hours": float(exit_geom.get("max_hold_hours") or 0),
+        "signal_interval": str(signal.get("interval") or ""),
+        "factor_interval": str(signal.get("factor_interval") or signal.get("interval") or ""),
+        "bar_source": str(signal.get("bar_source") or "klines"),
+        "lookback_bars": int(signal.get("lookback_bars") or 0),
+        "cross_source": str(entry.get("cross_source") or "MEMORY").upper(),
+        "same_symbol_cooldown_minutes": int(entry.get("same_symbol_cooldown_minutes") or 0),
         "entry_blackout": blackout.label() if blackout is not None else "OFF",
         "max_trades": int(port.get("max_simultaneous_trades") or 0),
         "allocation": float(port.get("allocation_per_trade") or 0),
@@ -262,6 +291,19 @@ def validate_production_freeze(cfg: dict[str, Any]) -> list[str]:
         errs.append(f"{PRODUCTION_STRATEGY} activation must be {act}")
     if abs(float(fp["exit_trail"]) - dist) > 1e-12:
         errs.append(f"{PRODUCTION_STRATEGY} trail must be {dist}")
+    hold = float(FROZEN_MAX_HOLD_HOURS.get(PRODUCTION_STRATEGY, 0.0))
+    if abs(float(fp["exit_max_hold_hours"]) - hold) > 1e-12:
+        errs.append(f"{PRODUCTION_STRATEGY} max_hold_hours must be {hold}")
+    sig_fp = {"interval": fp["signal_interval"], "factor_interval": fp["factor_interval"],
+              "bar_source": fp["bar_source"], "lookback_bars": fp["lookback_bars"]}
+    for key, got in sig_fp.items():
+        if str(got).lower() != str(PRODUCTION_SIGNAL[key]).lower():
+            errs.append(f"signal.{key}={got} (expected {PRODUCTION_SIGNAL[key]})")
+    if fp["cross_source"] != PRODUCTION_CROSS_SOURCE:
+        errs.append(f"cross_source={fp['cross_source']} (expected {PRODUCTION_CROSS_SOURCE})")
+    if fp["same_symbol_cooldown_minutes"] != PRODUCTION_COOLDOWN_MIN:
+        errs.append(f"same_symbol_cooldown_minutes={fp['same_symbol_cooldown_minutes']} "
+                    f"(expected {PRODUCTION_COOLDOWN_MIN})")
     if fp["entry_blackout"] != _production_blackout_label():
         errs.append(f"entry_blackout={fp['entry_blackout']} (expected {_production_blackout_label()})")
     if int(fp.get("max_trades") or 0) != PRODUCTION_MAX_TRADES:
@@ -288,7 +330,12 @@ def format_check_config_report(cfg: dict[str, Any]) -> str:
         f"selector:             {fp['selector']}",
         f"exit SL:              {fp['exit_sl']}",
         f"exit activation:      {fp['exit_activation']}",
-        f"exit trail:           {fp['exit_trail']}",
+        f"exit trail:           {fp['exit_trail']}" + ("  (fixed TP)" if fp["exit_trail"] == 0 else ""),
+        f"exit max hold (h):    {fp['exit_max_hold_hours']}",
+        f"signal bars:          {fp['signal_interval']} from {fp['bar_source']}, "
+        f"factor lookbacks {fp['factor_interval']}, window {fp['lookback_bars']}",
+        f"cross source:         {fp['cross_source']}",
+        f"same-symbol cooldown: {fp['same_symbol_cooldown_minutes']} min",
         f"entry blackout:       {fp['entry_blackout']}",
         f"max_trades:           {fp.get('max_trades')}",
         f"allocation:           {fp.get('allocation')}",

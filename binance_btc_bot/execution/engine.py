@@ -204,6 +204,9 @@ class BinanceBotEngine:
             one_per_symbol=self.portfolio.config.one_position_per_symbol,
             portfolio=self.portfolio,
             blackout=EntryBlackout.from_config(entry_cfg.get("blackout")),
+            cross_source=str(entry_cfg.get("cross_source") or "MEMORY"),
+            same_symbol_cooldown_sec=60.0 * float(entry_cfg.get("same_symbol_cooldown_minutes") or 0),
+            last_exit_lookup=self.db.last_exit_epoch,
         )
         self.entry_exec = EntryExecutor(
             self.exchange,
@@ -285,6 +288,46 @@ class BinanceBotEngine:
 
     def safety_cycle(self, *, force: bool = False) -> dict[str, Any]:
         return self.safety_runtime.cycle(force=force)
+
+    def time_exit_cycle(self, *, now: float | None = None, min_interval_sec: float = 30.0) -> list[dict[str, Any]]:
+        """Market-close protected positions whose strategy max hold has elapsed (OCO cancelled first)."""
+        import json
+        from datetime import datetime, timezone
+
+        from binance_btc_bot.config_loader import FROZEN_MAX_HOLD_HOURS
+        from binance_btc_bot.execution.safety_runtime import MANAGED_STATUSES
+
+        now_s = time.time() if now is None else float(now)
+        if now_s - getattr(self, "_last_time_exit_check", 0.0) < min_interval_sec:
+            return []
+        self._last_time_exit_check = now_s
+        out: list[dict[str, Any]] = []
+        for t in self.db.open_trades():
+            if str(t.get("status") or "").upper() not in MANAGED_STATUSES:
+                continue
+            try:
+                cfg = json.loads(t.get("strategy_config_json") or "{}")
+            except (TypeError, ValueError):
+                cfg = {}
+            hold_h = float(cfg.get("max_hold_hours") or FROZEN_MAX_HOLD_HOURS.get(str(t.get("strategy") or "").upper(), 0.0))
+            if hold_h <= 0 or not t.get("entry_time"):
+                continue
+            try:
+                et = datetime.fromisoformat(str(t["entry_time"]).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            et = et if et.tzinfo else et.replace(tzinfo=timezone.utc)
+            if now_s - et.timestamp() < hold_h * 3600.0:
+                continue
+            sym = str(t.get("symbol") or "").upper()
+            res = dict(self.safety_runtime.exit_position(t, reason="TIME_EXIT"))
+            res["symbol"] = sym
+            out.append(res)
+            self.db.insert_event("TIME_EXIT", symbol=sym, trade_id=str(t.get("trade_id")),
+                                 reason=str(res.get("result")), payload={"max_hold_hours": hold_h})
+            if str(res.get("result")) not in {"CLOSED", "DRY_RUN_CLOSED", "ALREADY_CLOSED"}:
+                logger.warning("time exit %s not completed: %s", sym, res)
+        return out
 
     def _safety_notify(self, event: str, message: str, **kwargs: Any) -> None:
         severity = str(kwargs.pop("severity", "WARNING")).upper()

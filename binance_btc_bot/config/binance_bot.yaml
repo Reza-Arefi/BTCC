@@ -1,21 +1,22 @@
 # Binance BTC Compounding Bot — AUTHORITATIVE production configuration
 # Real trading is DISABLED by default. Do not enable without explicit operator action.
 #
-# Canonical identity:
-#   TRN4 exit + E2 signed S NEW_CROSS >= 0.65 + Nmax=4 × 25%
-#   + no new entries FRI 12:00 → MON 00:00 UTC
+# Canonical identity (HTF4H research, htf_4h/):
+#   E2 signed S on 4h ALT/BTC bars (built from 1m legs), 15m factor lookbacks (x16 in time)
+#   + NEW_CROSS >= 0.65 on a closed 4h bar + F4H exit (SL 25% / TP 30% / 5-day time exit)
+#   + Nmax=6 × 16.66% + 2h same-symbol cooldown + no weekend entry blackout
 # Mirror / discovery pointer: configs/live_production.yaml
 
 production:
-  config_version: "TRN4_E2_S65_N4_WKND_v1"
-  validated_strategy: TRN4
+  config_version: "F4H_X16_S65_N6_v1"
+  validated_strategy: F4H
   entry_profile: e2
   threshold: 0.65
   entry_rule: NEW_CROSS
   late_entry: false
   selector: null
-  fingerprint_window: "live trades 2026-09-13→2026-10-12 (W2 + T30 cohorts, 149 entries)"
-  fingerprint_note: "TRN4 SL5 + FRI12→MON00 block N=4 25% — replay +26.2% / DD -4.3% / PF 2.32 after fees"
+  fingerprint_window: "backtest 2023-10-01 → 2026-09-24 (36 months, 1m exit walk, 0.1%/side fees)"
+  fingerprint_note: "F4H x16 S65 N=6 × 1/6 — +750% / DD -30.9% (+521% / DD -34.9% with 0.22pp live gap)"
 
 exchange:
   name: binance
@@ -33,21 +34,21 @@ exchange:
 
 live:
   enabled: false          # HARD DEFAULT — never auto-enable
-  strategy: TRN4          # E2 S>=0.65 entry + TRN4 exits (5% SL / 4% act / 0.5% trail)
+  strategy: F4H           # 4h E2 S>=0.65 entry + F4H exits (25% SL / 30% TP / 5-day time exit)
   selector: null
   dry_run: true
-  max_open_positions: 4
+  max_open_positions: 6
   one_position_per_symbol: true
 
 portfolio:
-  max_simultaneous_trades: 4
-  allocation_per_trade: 0.25   # 25% of trading equity per trade
-  max_total_allocation: 1.0    # 4 × 25% = 100%
+  max_simultaneous_trades: 6
+  allocation_per_trade: 0.1666 # 16.66% of trading equity per trade (~1/6)
+  max_total_allocation: 1.0    # 6 × 16.66% = 99.96%
   one_position_per_symbol: true
 
 risk:
-  max_loss_per_trade: 0.0125  # 1.25% equity = 25% × 5% TRN4 SL
-  max_allocation_pct: 0.25
+  max_loss_per_trade: 0.04165 # 4.165% equity = 16.66% × 25% F4H SL
+  max_allocation_pct: 0.1666
   max_aggregate_exposure: 1.0
   no_leverage: true
   stale_data_max_age_sec: 30
@@ -161,6 +162,13 @@ strategies:
     arm_sl_activation_trail: 0.05
     activation: 0.04
     trail_distance: 0.005
+  # HTF4H winner — fixed OCO: STOP_LOSS -25% + TAKE_PROFIT +30% (trail 0 = no trailingDelta),
+  # market close after max_hold_hours.
+  F4H:
+    arm_sl_activation_trail: 0.25
+    activation: 0.30
+    trail_distance: 0.0
+    max_hold_hours: 120
 
 # Research-only selector definitions (LIVE_SELECTOR = null).
 selectors:
@@ -184,21 +192,26 @@ entry:
   upper_threshold: null
   rule: NEW_CROSS
   late_entry_enabled: false
-  # Weekly window with NO new entries (open positions keep their OCO).
-  # A cross inside the window is consumed, not deferred to Monday.
+  # BAR = previous S is the S of the previous closed 4h bar; each bar is decided once.
+  cross_source: BAR
+  # After a close, the same symbol cannot be re-entered for this many minutes (cross is consumed).
+  same_symbol_cooldown_minutes: 120
+  # No weekend entry block for the 4h strategy.
   blackout:
-    enabled: true
-    timezone: UTC
-    start: "FRI 12:00"
-    end: "MON 00:00"
+    enabled: false
 
 # Production score path — signed S via compute_all_factors → combined_score, E2 momentum.
+# 4h ALT/BTC bars are built from 1m USDT legs (cached under <sqlite dir>/rel4h_1m/); factor lookbacks
+# use the 15m horizons, i.e. every lookback x16 in time. Window 400 bars; S_previous = window one bar earlier.
 signal:
-  interval: 15m
-  lookback_bars: 1000
-  min_history_bars: 100
+  interval: 4h
+  factor_interval: 15m
+  bar_source: 1m_ratio
+  lookback_bars: 400
+  min_history_bars: 400
   momentum_profile: e2
   diagnostics: false
+  # Entries only within 30 min after a 4h close (backtest fills at the next 4h open).
   max_closed_candle_age_sec: 1800
   signal_config_path: configs/signal_config.yaml
 
@@ -253,6 +266,8 @@ safety_manager:
   reset_counter_on_win: true      # trailing/TP exit resets the SL counter to 0
   sl_cooldown_minutes: 0          # optional pause after 1 SL (0 = disabled)
   # Defensive mode trigger: >= defensive_loss_count of defensive_min_open open positions <= defensive_loss_pct.
+  # OFF for F4H: its -2%/-3% tighten/exit levels would cut 25%-SL positions on normal 4h noise.
+  defensive_enabled: false
   defensive_min_open: 4
   defensive_loss_count: 3
   defensive_loss_pct: -0.020
